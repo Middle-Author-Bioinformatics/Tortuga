@@ -1,3 +1,15 @@
+# 2.0.2 - 2026-11-07
+
+- Added `pipeline_controller.sh` with `--pipeline itsme`, `mitolooper`, or `both`.
+- Standalone ITSME mode processes FASTQ pairs without mitochondrial references,
+  BOLD, MITOS2 models, or a required sample sheet. Its native outputs are retained.
+- Combined mode uses the existing integrated ordering so ITSME runs once per sample.
+- Added `-i/--input-dir`, mode-specific default output folders, ITSME sensitivity,
+  matching checkpoints, failure continuation, and controller usage documentation.
+- Shared the automatic Python/Conda launcher across entry points and limited
+  ITSME-only environment reports to its selected tool.
+- Added seven selector/standalone batch regression tests.
+
 # 2.0.1 - 2026-11-07
 
 - Made environment selection automatic during execution. No configuration-generation

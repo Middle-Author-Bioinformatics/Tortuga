@@ -1,4 +1,9 @@
-# MitoGenomeScanner 2.0.1
+# MitoGenomeScanner 2.0.2
+
+**Unified controller:** `pipeline_controller.sh --pipeline itsme|mitolooper|both`
+selects standalone ITSME, mitochondrial recovery, or the integrated workflow.
+Use one of the three literal values (not the `|` notation). See `CONTROLLER.md`
+for commands. ITSME-only mode needs no mitochondrial databases or metadata.
 
 **TheBelly users:** run `bash mito_looper.sh ...` directly, including from `base`.
 The launcher enters the existing `itsme` environment for Python and runs each

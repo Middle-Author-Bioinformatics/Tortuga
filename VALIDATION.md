@@ -1,8 +1,8 @@
 # Validation - 2026-11-07
 
-Controller version: 2.0.1.
+Controller version: 2.0.2.
 
-- 25 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 32 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -17,6 +17,9 @@ Controller version: 2.0.1.
 - Automatic-routing tests cover launch without manual activation, first-choice
   selection with alternative notes, command execution under different stage prefixes,
   pipeline startup without a config file and reporting missing executables.
+- Controller tests cover all three selectors, exactly one ITSME call in combined
+  mode, no mitochondrial prerequisites for standalone ITSME, standalone retries and
+  caching, failure continuation across samples, selector validation and the shell entry point.
 - Original uploaded scripts are preserved byte-for-byte under `legacy/`.
 
 The integration tests use CLI doubles and synthetic references, not the actual

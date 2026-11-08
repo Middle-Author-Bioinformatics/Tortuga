@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -779,7 +779,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
         idir = attempt_dir(root, runner, "itsme", root/"02_itsme")
         itsme_ok = runner.run("itsme", "itsme", ["-1", sample.r1, "-2", sample.r2,
                               "--db-dir", args.itsme_db, "-o", idir/"output",
-                              "-t", args.threads, "-m", args.memory, "--sensitivity", 2],
+                              "-t", args.threads, "-m", args.memory, "--sensitivity", args.itsme_sensitivity],
                               idir, args.itsme_timeout*60,
                               [idir/"output"/"run_summary.txt"])
     else:
@@ -831,7 +831,8 @@ def process_sample(sample, args, commands, metadata, bold_db):
               "recovered_annotation_failed" if winner else
               "partial_target_confirmed" if best and best["target_status"] == "confirmed_target" else
               "unresolved_candidate" if best else "no_candidate")
-    summary = {"sample": sample.sample, "status": "planned" if args.dry_run else status,
+    summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
+               "status": "planned" if args.dry_run else status,
                "target_taxon": sample.target_taxon, "mt_code": sample.mt_code,
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
@@ -855,14 +856,18 @@ def process_sample(sample, args, commands, metadata, bold_db):
     return summary
 
 
-def parser():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("input_dir", type=Path, help="Paired FASTQ directory (including W*_1.fq.gz)")
+def parser(require_pipeline=False):
+    p = argparse.ArgumentParser(description="Run ITSME, MitoLooper, or both with automatic Conda environment switching." if require_pipeline else __doc__,
+                                prog="pipeline_controller.sh" if require_pipeline else None)
+    p.add_argument("input_dir", type=Path, nargs="?", help="Paired FASTQ directory (including W*_1.fq.gz)")
+    p.add_argument("-i","--input-dir",type=Path,dest="input_dir_option",help="Alternative to the positional FASTQ directory")
+    p.add_argument("--pipeline",choices=["itsme","mitolooper","both"],required=require_pipeline,
+                   help="Run nuclear rDNA only, mitochondrial recovery only, or both in workflow order")
     p.add_argument("--version", action="version", version=VERSION)
     p.add_argument("--samples", type=Path, help="TSV with sample,target_taxon,mt_code,reference_gb[,seed_fasta]")
     p.add_argument("--make-sample-sheet", type=Path, help="Write a blank metadata TSV and exit")
     p.add_argument("--only-sample", help="Run just one sample from the sheet")
-    p.add_argument("-o", "--outdir", type=Path, default=Path("mito_results"))
+    p.add_argument("-o", "--outdir", type=Path,help="Output directory; defaults to itsme_results, mito_results, or both_results for the selected pipeline")
     p.add_argument("-t", "--threads", type=int, default=24)
     p.add_argument("-m", "--memory", type=int, default=128, help="Assembler memory GB; not a global process limit")
     p.add_argument("--config", type=Path, help="Optional explicit command mapping; otherwise environments are selected automatically")
@@ -870,8 +875,10 @@ def parser():
                    help="Root containing existing Conda environments")
     p.add_argument("--conda",type=Path,help="Optional absolute Conda executable override")
     p.add_argument("--itsme-script",type=Path,default=Path.home()/"bin/ITSME/itsme.v2.sh")
-    p.add_argument("--branch", choices=["mito","full"], default="mito")
+    p.add_argument("--branch", choices=["mito","full"], default=None,help="Legacy mode flag; prefer --pipeline on the controller")
     p.add_argument("--itsme-db", type=Path)
+    p.add_argument("--sensitivity","--itsme-sensitivity",type=int,choices=[1,2,3],default=2,
+                   dest="itsme_sensitivity",help="ITSME recruitment preset (default 2)")
     p.add_argument("--bold-fasta", type=Path, help="Local BOLD-derived COI reference FASTA, including alternative taxa")
     p.add_argument("--bold-metadata", type=Path, help="Matching BOLD provenance/taxonomy TSV")
     p.add_argument("--mitos-refdir", type=Path)
@@ -910,10 +917,127 @@ def parser():
     return p
 
 
-def main(argv=None):
-    args = parser().parse_args(argv)
+def resolve_commands(args, tools=None):
+    tools=list(DEFAULT_COMMANDS if tools is None else tools)
+    commands={tool:list(DEFAULT_COMMANDS[tool]) for tool in tools}
+    rows=[]
+    if args.config:
+        config=json.loads(args.config.read_text())
+        for key,value in config.get("commands",{}).items():
+            if key not in DEFAULT_COMMANDS or not isinstance(value,list) or not value or not all(isinstance(x,str) for x in value):
+                raise ValueError(f"Invalid command prefix: {key}")
+            if key in commands:
+                commands[key]=[os.path.expanduser(os.path.expandvars(x)) for x in value]
+    else:
+        from configure_belly import runtime_commands
+        commands,rows=runtime_commands(args.env_root,args.conda,args.itsme_script,tools,args.branch)
+    return commands,rows
+
+
+def run_itsme_only(args,pairs):
+    """Standalone rDNA batches need no mitochondrial metadata or databases."""
+    if not args.itsme_db or not args.itsme_db.expanduser().is_dir():
+        raise ValueError("ITSME requires --itsme-db pointing to the existing rRNA database root")
+    if args.threads<1 or args.memory<1 or args.itsme_timeout<=0:
+        raise ValueError("Threads, memory and ITSME timeout must be positive")
+    args.itsme_db=args.itsme_db.expanduser().resolve()
+    selected=dict(pairs)
+    if args.samples:
+        sheet=args.samples.expanduser().resolve()
+        with sheet.open(newline="") as f:
+            reader=csv.DictReader(f,delimiter="\t")
+            if "sample" not in (reader.fieldnames or []):
+                raise ValueError("Optional ITSME sample sheet needs a sample column")
+            names=[row["sample"].strip() for row in reader]
+        if len(names)!=len(set(names)) or any(name not in pairs for name in names):
+            raise ValueError("Duplicate sample name or missing read pair in sample sheet")
+        selected={name:pairs[name] for name in names}
+    if args.only_sample:
+        if args.only_sample not in selected:
+            raise ValueError(f"Sample not found: {args.only_sample}")
+        selected={args.only_sample:selected[args.only_sample]}
+    if not selected:
+        raise ValueError("No samples selected")
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*",name) for name in selected):
+        raise ValueError("Sample names must begin with a letter/digit and contain only letters, digits, _, . or -")
+    commands,environment_rows=resolve_commands(args,["itsme"])
+    import fcntl
+    args.outdir.mkdir(parents=True,exist_ok=True)
+    with (args.outdir/".pipeline.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("Another pipeline is writing this output directory")
+        if environment_rows:
+            atomic_json(args.outdir/"environment_selection.json",environment_rows)
+            write_table(args.outdir/"environment_selection.tsv",environment_rows,
+                        ["tool","status","environment","entrypoint","alternatives","note"])
+        results=[]
+        for name,(r1,r2) in selected.items():
+            print(f"\n=== {name}: ITSME ===",flush=True)
+            root=args.outdir/name
+            root.mkdir(parents=True,exist_ok=True)
+            try:
+                payload={"version":VERSION,"pipeline":"itsme","sample":name,
+                         "reads":[stamp(r1),stamp(r2)],"itsme_db":str(args.itsme_db),
+                         "commands":commands,"threads":args.threads,"memory":args.memory,
+                         "timeout":args.itsme_timeout,"sensitivity":args.itsme_sensitivity}
+                checkpoint=root/"run_config.json"
+                if checkpoint.exists():
+                    if not args.resume:
+                        raise ValueError(f"{root} already has a run; use --resume or a new output directory")
+                    if json.loads(checkpoint.read_text())!=payload:
+                        raise ValueError("Inputs/settings/pipeline changed; use a new output directory")
+                elif any(root.iterdir()):
+                    raise ValueError(f"{root} is nonempty without a matching checkpoint")
+                atomic_json(checkpoint,payload)
+                runner=Runner(root,commands,args.resume,args.dry_run)
+                work=attempt_dir(root,runner,"itsme",root/"itsme")
+                output=work/"output"
+                ok=runner.run("itsme","itsme",
+                              ["-1",r1,"-2",r2,"--db-dir",args.itsme_db,"-o",output,
+                               "-t",args.threads,"-m",args.memory,"--sensitivity",args.itsme_sensitivity],
+                              work,args.itsme_timeout*60,[output/"run_summary.txt"])
+                result={"sample":name,"pipeline":"itsme","status":"planned" if args.dry_run else "completed" if ok else "failed",
+                        "itsme_ok":ok,"itsme_output":str(output),"failed_stages":[] if ok else ["itsme"]}
+                atomic_json(root/"stages.json",runner.events)
+                write_table(root/"stages.tsv",runner.events,["stage","status","reason","returncode","elapsed_seconds","log","command"])
+                atomic_json(root/"final/summary.json",result)
+            except (ValueError,RuntimeError,OSError) as error:
+                print(f"ERROR [{name}]: {error}",file=sys.stderr)
+                result={"sample":name,"pipeline":"itsme","status":"failed","error":str(error)}
+            results.append(result)
+        previous={p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
+        previous.update({r["sample"]:r for r in results})
+        write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
+                    ["sample","pipeline","status","itsme_ok","itsme_output","failed_stages","error"],",")
+        atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,"pipeline":"itsme","results":results})
+        return 1 if any(r["status"]=="failed" for r in results) else 0
+
+
+def main(argv=None,require_pipeline=False):
+    cli=parser(require_pipeline=require_pipeline)
+    args = cli.parse_args(argv)
+    if require_pipeline and not args.pipeline:
+        cli.error("--pipeline is required: choose itsme, mitolooper, or both")
+    if args.input_dir and args.input_dir_option:
+        cli.error("Provide the FASTQ directory either positionally or with --input-dir, not both")
+    args.input_dir=args.input_dir or args.input_dir_option
+    del args.input_dir_option
+    if not args.input_dir:
+        cli.error("A FASTQ directory is required (positional or --input-dir)")
+    if args.pipeline:
+        branch="full" if args.pipeline in {"itsme","both"} else "mito"
+        if args.branch and (args.pipeline=="itsme" or args.branch!=branch):
+            cli.error("--pipeline conflicts with --branch; use --pipeline alone")
+        args.branch=branch
+        if args.pipeline in {"itsme","both"} and args.itsme_db is None:
+            args.itsme_db=Path(os.environ.get("ITSME_DB","/home/ark/databases/itsme_db"))
+    else:
+        args.branch=args.branch or "mito"
     args.input_dir = args.input_dir.expanduser().resolve()
-    args.outdir = args.outdir.expanduser().resolve()
+    default_output={"itsme":"itsme_results","mitolooper":"mito_results","both":"both_results"}.get(args.pipeline,"mito_results")
+    args.outdir = (args.outdir or Path(default_output)).expanduser().resolve()
     if args.dry_run and args.outdir.exists() and any(args.outdir.iterdir()):
         raise ValueError("Dry runs require a new/empty output directory to protect existing results")
     pairs = discover_pairs(args.input_dir)
@@ -924,6 +1048,8 @@ def main(argv=None):
                     ["sample","target_taxon","mt_code","reference_gb","seed_fasta"])
         print(f"Wrote {args.make_sample_sheet}; fill metadata before running")
         return 0
+    if args.pipeline=="itsme":
+        return run_itsme_only(args,pairs)
     for key in ["samples","bold_fasta","bold_metadata","mitos_refdir","mitos_refseqver"]:
         if not getattr(args,key):
             raise ValueError(f"--{key.replace('_','-')} is required")
@@ -943,18 +1069,7 @@ def main(argv=None):
         raise ValueError("Timeouts must be positive")
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
         raise ValueError("Invalid coverage or near-best fraction")
-    environment_rows=[]
-    commands = dict(DEFAULT_COMMANDS)
-    if args.config:
-        config = json.loads(args.config.read_text())
-        for key,value in config.get("commands",{}).items():
-            if key not in commands or not isinstance(value,list) or not value or not all(isinstance(x,str) for x in value):
-                raise ValueError(f"Invalid command prefix: {key}")
-            commands[key] = [os.path.expanduser(os.path.expandvars(x)) for x in value]
-    else:
-        from configure_belly import runtime_commands
-        commands,environment_rows=runtime_commands(args.env_root,args.conda,args.itsme_script,
-                                                   DEFAULT_COMMANDS,args.branch)
+    commands,environment_rows=resolve_commands(args)
     samples = []
     with args.samples.open(newline="") as f:
         rows = csv.DictReader(f, delimiter="\t")
@@ -1026,7 +1141,7 @@ def main(argv=None):
         previous = {p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
         previous.update({r["sample"]:r for r in results})
         write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
-                    ["sample","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
+                    ["sample","pipeline","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
                      "circular","target_status","genes_recovered","genes_expected","candidate_count",
                      "itsme_ok","wgs_ok","annotation_ok","failed_stages","error"],",")
         gene_rows = []
@@ -1036,7 +1151,8 @@ def main(argv=None):
                 with path.open(newline="") as f:
                     gene_rows.extend(csv.DictReader(f))
         write_table(args.outdir/"cohort_gene_recovery.csv",gene_rows,GENE_FIELDS,",")
-        atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,"results":results})
+        atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,
+                    "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),"results":results})
         return 1 if any(r["status"] in {"failed","recovered_annotation_failed"} or r.get("wgs_ok") is False
                        or r.get("itsme_ok") is False or (not r.get("winning_method") and r.get("failed_stages"))
                        for r in results) else 0

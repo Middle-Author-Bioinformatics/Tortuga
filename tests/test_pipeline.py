@@ -282,3 +282,83 @@ def test_missing_auto_selected_tool_is_reported_without_using_current_path(tmp_p
     monkeypatch.setattr(subprocess,"Popen",forbidden)
     assert runner.run("novoplasty","novoplasty",[],tmp_path,10) is False
     assert runner.events[-1]["returncode"]==127
+
+
+def itsme_argv(fixture):
+    argv=fixture["argv"]
+    config=argv[argv.index("--config")+1]
+    argv[:]=["--pipeline","itsme","-i",str(fixture["reads"]),"--itsme-db",str(fixture["itsmedb"]),
+             "--config",config,"-o",str(fixture["out"])]
+
+
+def test_controller_itsme_only_needs_no_mito_references_or_sample_sheet(fixture):
+    itsme_argv(fixture)
+    code,events=fixture["run"]({})
+    assert code==0
+    assert [e["tool"] for e in events]==["itsme"]
+    assert summary(fixture)["pipeline"]=="itsme"
+    assert summary(fixture)["status"]=="completed"
+    assert not (fixture["out"]/"bold_reference").exists()
+
+
+def test_controller_both_runs_itsme_once_in_order(fixture):
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},
+                              ["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--sensitivity","3"])
+    assert code==0
+    names=[e["tool"] for e in events]
+    assert names.count("itsme")==1
+    assert names.index("novoplasty")<names.index("itsme")<names.index("metaspades")
+    call=next(e for e in events if e["tool"]=="itsme")
+    assert call["args"][call["args"].index("--sensitivity")+1]=="3"
+    assert summary(fixture)["pipeline"]=="both"
+
+
+def test_controller_mitolooper_never_calls_itsme(fixture):
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},["--pipeline","mitolooper","--no-assembly"])
+    assert code==0
+    assert "itsme" not in [e["tool"] for e in events]
+    assert summary(fixture)["pipeline"]=="mitolooper"
+
+
+def test_controller_itsme_resume_and_retry(fixture):
+    itsme_argv(fixture)
+    code,_=fixture["run"]({},fail=["itsme"])
+    assert code==1
+    code,events=fixture["run"]({},["--resume"])
+    assert code==0
+    assert len(events)==2 and events[0]["cwd"]!=events[1]["cwd"]
+    count=len(events)
+    code,events=fixture["run"]({},["--resume"])
+    assert code==0 and len(events)==count
+
+
+def test_controller_itsme_continues_after_failures_and_accepts_name_only_sheet(fixture):
+    import shutil
+    for mate in [1,2]:
+        shutil.copyfile(fixture["reads"]/f"W30877_{mate}.fq.gz",fixture["reads"]/f"W30882_{mate}.fq.gz")
+    itsme_argv(fixture)
+    m.write_table(fixture["sheet"],[{"sample":"W30877"},{"sample":"W30882"}],["sample"])
+    code,events=fixture["run"]({},["--samples",str(fixture["sheet"])],fail=["itsme"])
+    assert code==1 and len(events)==2
+    with (fixture["out"]/"cohort_summary.csv").open() as f:
+        rows=list(csv.DictReader(f))
+    assert {r["sample"] for r in rows}=={"W30877","W30882"}
+    assert all(r["status"]=="failed" for r in rows)
+
+
+def test_controller_requires_valid_selector_and_rejects_conflicting_branch(fixture):
+    with pytest.raises(SystemExit) as error:
+        m.main([str(fixture["reads"])],require_pipeline=True)
+    assert error.value.code==2
+    with pytest.raises(SystemExit) as error:
+        m.main([str(fixture["reads"]),"--pipeline","bogus"],require_pipeline=True)
+    assert error.value.code==2
+    with pytest.raises(SystemExit) as error:
+        m.main([str(fixture["reads"]),"--pipeline","mitolooper","--branch","full"],require_pipeline=True)
+    assert error.value.code==2
+
+
+def test_controller_shell_uses_shared_launcher(tmp_path):
+    env=dict(os.environ,MITO_PYTHON=sys.executable)
+    p=subprocess.run(["bash",str(ROOT/"pipeline_controller.sh"),"--version"],env=env,capture_output=True,text=True)
+    assert p.returncode==0 and p.stdout.strip()==m.VERSION

@@ -1,5 +1,9 @@
 # Run on TheBelly: automatic environment switching
 
+For the new unified entry point, use `pipeline_controller.sh` with
+`--pipeline itsme`, `--pipeline mitolooper`, or `--pipeline both`; see
+`CONTROLLER.md`. The direct mitochondrial launcher below remains supported.
+
 Use the existing installations. No environment creation, manual activation, or
 config-generation step is needed for normal execution.
 

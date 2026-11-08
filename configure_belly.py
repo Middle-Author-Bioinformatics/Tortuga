@@ -176,6 +176,7 @@ def runtime_commands(env_root, conda, itsme_script, tools, branch="mito"):
     conda=Path(conda).expanduser().resolve()
     config,rows=build_config(env_root,conda,Path(itsme_script).expanduser().resolve(),branch)
     commands={tool:config["commands"].get(tool,[]) for tool in tools}
+    rows=[row for row in rows if row["tool"] in commands]
     for row in rows:
         if row["status"]=="found":
             alternatives=[p for p in row["alternatives"].split(";") if p and p!=row["environment"]]
