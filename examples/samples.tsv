@@ -1,0 +1,2 @@
+sample	target_taxon	mt_code	reference_gb	seed_fasta
+W30877	FILL_TARGET_TAXON	FILL_NCBI_GENETIC_CODE	/absolute/path/to/curated_reference.gb	

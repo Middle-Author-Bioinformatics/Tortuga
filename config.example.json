@@ -1,0 +1,11 @@
+{
+  "commands": {
+    "novoplasty": ["perl", "~/bin/NOVOPlasty/NOVOPlasty4.3.5.pl"],
+    "getorganelle": ["conda", "run", "--no-capture-output", "-n", "getorganelle", "get_organelle_from_reads.py"],
+    "getorganelle_assembly": ["conda", "run", "--no-capture-output", "-n", "getorganelle", "get_organelle_from_assembly.py"],
+    "mitofinder": ["singularity", "run", "--bind", "/home:/home", "~/bin/MitoFinder/mitofinder_v1.4.2.sif"],
+    "mtgrasp": ["conda", "run", "--no-capture-output", "-n", "mtgrasp", "mtgrasp.py"],
+    "mitos2": ["conda", "run", "--no-capture-output", "-n", "mitos2", "runmitos.py"],
+    "itsme": ["conda", "run", "--no-capture-output", "-n", "itsme", "bash", "~/bin/ITSME/itsme.v2.sh"]
+  }
+}

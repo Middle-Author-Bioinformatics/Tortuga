@@ -1,0 +1,12 @@
+name: mito_workflow
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - biopython>=1.83
+  - blast>=2.14
+  - fastp
+  - spades
+  - megahit
+  - minimap2
