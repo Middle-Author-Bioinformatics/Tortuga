@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.0.4"
+VERSION = "2.0.5"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -266,10 +266,30 @@ class Runner:
         return row["status"] == "ok"
 
 
+def reference_gene_name(feature):
+    gene = feature.qualifiers.get("gene", [""])[0]
+    if not gene and feature.type == "rRNA":
+        product = feature.qualifiers.get("product", [""])[0]
+        compact = re.sub(r"[^a-z0-9]", "", product.lower())
+        if compact in {"srrna","ssurrna","smallsubunitribosomalrna"} or "12s" in compact:
+            gene = "rrns"
+        elif compact in {"lrrna","lsurrna","largesubunitribosomalrna"} or "16s" in compact:
+            gene = "rrnl"
+    return normalize_gene(gene) if gene else ""
+
+
+def reference_boundary_warnings(record):
+    from Bio.SeqFeature import ExactPosition
+    return [{"gene":reference_gene_name(feature),"location":str(feature.location),
+             "reason":"Uncertain annotation boundary; usable as a homology query, not a full-length boundary standard"}
+            for feature in record.features if feature.type in {"CDS","rRNA"} and feature.location is not None
+            and any(not isinstance(pos,ExactPosition) for part in feature.location.parts for pos in (part.start,part.end))]
+
+
 def reference_data(record, mt_code):
     """Validate and extract reference genes without writing files."""
     from Bio.Seq import Seq
-    from Bio.SeqFeature import ExactPosition
+    from Bio.SeqFeature import ExactPosition, BeforePosition, AfterPosition
     if not record.seq or set(str(record.seq).upper()) - set("ACGTRYSWKMBDHVN"):
         raise ValueError("Invalid nucleotide reference")
     proteins, rnas, labels, names = [], [], [], set()
@@ -277,20 +297,23 @@ def reference_data(record, mt_code):
     for feature in record.features:
         if feature.type not in {"CDS", "rRNA"}:
             continue
-        gene = feature.qualifiers.get("gene", [""])[0]
-        product = feature.qualifiers.get("product", [""])[0]
-        if not gene and feature.type == "rRNA":
-            gene = "rrns" if "12S" in product else "rrnl" if "16S" in product else ""
+        gene = reference_gene_name(feature)
         if not gene:
             raise ValueError(f"Reference {record.id} has {feature.type} without a gene name")
-        gene = normalize_gene(gene)
         if gene in names:
             raise ValueError(f"Duplicate reference gene {gene}; use a single curated mitogenome")
         names.add(gene)
         nt = str(feature.extract(record.seq))
-        if set(nt.upper())-set("ACGT") or any(not isinstance(p.start, ExactPosition) or not isinstance(p.end, ExactPosition)
-                                             for p in feature.location.parts):
-            raise ValueError(f"Reference gene {gene} is partial/ambiguous; curate reference")
+        if set(nt.upper())-set("ACGT"):
+            raise ValueError(f"Reference gene {gene} contains ambiguous DNA bases; curate reference")
+        positions = [pos for part in feature.location.parts for pos in (part.start,part.end)]
+        if any(not isinstance(pos,(ExactPosition,BeforePosition,AfterPosition)) for pos in positions):
+            raise ValueError(f"Reference gene {gene} has unsupported uncertain coordinates; curate reference")
+        if any(int(part.start)<0 or int(part.end)>len(record.seq) for part in feature.location.parts) or not nt:
+            raise ValueError(f"Reference gene {gene} has invalid coordinates")
+        uncertain = any(not isinstance(pos,ExactPosition) for pos in positions)
+        if uncertain and feature.type=="CDS" and not feature.qualifiers.get("translation"):
+            raise ValueError(f"Reference gene {gene} has an uncertain boundary without an annotated translation")
         labels.append((gene, nt))
         if feature.type == "CDS":
             aa = feature.qualifiers.get("translation", [""])[0]
@@ -320,12 +343,16 @@ def reference_files(sample, folder):
     folder.mkdir(parents=True, exist_ok=True)
     fasta_write(folder/"reference.fasta", record.id, str(record.seq))
     SeqIO.write(record,folder/"reference.gb","genbank")
+    warnings = reference_boundary_warnings(record)
+    atomic_json(folder/"reference_quality.json",{"accession":record.id,"annotation_warnings":warnings,
+                "interpretation":"Homology reference; uncertain gene boundaries cannot establish full-length recovery"})
     for filename, rows in [("proteins.faa", proteins), ("rrna.fasta", rnas), ("labels.fasta", labels)]:
         with (folder/filename).open("w") as f:
             for name, seq in rows:
                 f.write(f">{name}\n{seq}\n")
     fasta_write(folder/"seed.fasta", "reference_cox1", seed)
     return {"seed": sample.seed_fasta or folder/"seed.fasta", "reference": folder/"reference.fasta",
+            "annotation_warnings":warnings,
             "genbank": folder/"reference.gb",
             "proteins": folder/"proteins.faa", "rrna": folder/"rrna.fasta", "labels": folder/"labels.fasta",
             "required_proteins": [x[0] for x in proteins], "required_rrnas": [x[0] for x in rnas]}
@@ -841,6 +868,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
     summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
                "status": "planned" if args.dry_run else status,
                "target_taxon": sample.target_taxon, "taxonomy": sample.taxonomy, "mt_code": sample.mt_code,
+               "reference_gb":str(sample.reference_gb),"reference_annotation_warnings":refs["annotation_warnings"],
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
                "annotation_ok": annotation_ok, "annotation_dir": str(mitos/"output") if winner else "",
@@ -1029,6 +1057,60 @@ def run_itsme_only(args,pairs):
         return 1 if any(r["status"]=="failed" for r in results) else 0
 
 
+def resolve_sample_reference(row, args, pair, catalog):
+    """Resolve one sample independently so reference errors do not abort a cohort."""
+    from Bio import SeqIO
+    from Bio.Data import CodonTable
+    from reference_selection import select_reference, taxonomy_from_row
+    name, target = row["sample"].strip(), row["target_taxon"].strip()
+    lineage = taxonomy_from_row(row)
+    def refpath(value):
+        path = Path(os.path.expandvars(value)).expanduser()
+        path = (args.samples.parent/path).resolve() if not path.is_absolute() else path.resolve()
+        if not path.is_file():
+            raise ValueError(f"Missing reference: {path}")
+        return path
+    code_text = (row.get("mt_code") or "").strip()
+    code = int(code_text) if code_text else None
+    if code is not None and code not in CodonTable.unambiguous_dna_by_id:
+        raise ValueError(f"Invalid genetic code for {name}")
+    reference_text = (row.get("reference_gb") or "").strip()
+    if reference_text:
+        reference = refpath(reference_text)
+        record = SeqIO.read(reference,"genbank")
+        if code is None:
+            codes = {int(x) for feature in record.features if feature.type=="CDS"
+                     for x in feature.qualifiers.get("transl_table", [])}
+            if len(codes)!=1:
+                raise ValueError(f"{name}: reference does not specify a unique genetic code; fill mt_code")
+            code = next(iter(codes))
+        reference_data(record,code)
+        choice = {"accession":record.id,"organism":record.annotations.get("organism", ""),
+                  "match_level":"manual_override","match_rank":"manual","matched_taxon":"",
+                  "eligible_candidates":1,"annotation_warnings":reference_boundary_warnings(record)}
+    else:
+        choice = select_reference(catalog,target,code,args.reference_match,
+                                  args.min_genome_bp,args.max_genome_bp,lineage,args.reference_min_rank)
+        reference = Path(choice["path"])
+        if code is None:
+            code = choice["mt_code"]
+    if code not in CodonTable.unambiguous_dna_by_id:
+        raise ValueError(f"Invalid inferred genetic code for {name}")
+    seed = refpath(row["seed_fasta"]) if row.get("seed_fasta") else None
+    sample = Sample(name,*pair,target,code,reference,seed,lineage)
+    report = {"sample":name,"target_taxon":target,"reference_gb":str(reference),
+              "reference_accession":choice["accession"],"reference_taxon":choice["organism"],
+              "match_level":choice["match_level"],"match_rank":choice["match_rank"],
+              "matched_taxon":choice["matched_taxon"],"mt_code":code,
+              "code_source":"sample_sheet" if code_text else "GenBank_CDS",
+              "eligible_candidates":choice["eligible_candidates"],
+              "annotation_warnings":choice.get("annotation_warnings",[]),
+              "selection_status":"available","reference_error":""}
+    resolved = {**row,"sample":name,"target_taxon":target,"mt_code":code,
+                "reference_gb":str(reference),"seed_fasta":str(seed) if seed else ""}
+    return sample, report, resolved
+
+
 def main(argv=None,require_pipeline=False):
     cli=parser(require_pipeline=require_pipeline)
     args = cli.parse_args(argv)
@@ -1085,77 +1167,49 @@ def main(argv=None,require_pipeline=False):
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
         raise ValueError("Invalid coverage or near-best fraction")
     commands,environment_rows=resolve_commands(args)
-    samples = []
-    reference_choices = []
-    resolved_samples = []
+    samples, reference_choices, resolved_samples, reference_failures = [], [], [], []
     catalog = None
     with args.samples.open(newline="") as f:
-        rows = csv.DictReader(f, delimiter="\t")
-        input_columns = list(rows.fieldnames or [])
-        seen = set()
-        for row in rows:
-            name = row["sample"].strip()
-            if name in seen or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
-                raise ValueError(f"Duplicate or unsafe sample name: {name}")
-            seen.add(name)
-            if args.only_sample and name != args.only_sample:
-                continue
-            if name not in pairs or not row.get("target_taxon","").strip():
-                raise ValueError(f"Missing FASTQs or target_taxon for {name}")
-            def refpath(value):
-                p = Path(os.path.expandvars(value)).expanduser()
-                p = (args.samples.parent/p).resolve() if not p.is_absolute() else p
-                if not p.is_file():
-                    raise ValueError(f"Missing reference: {p}")
-                return p
-            from Bio.Data import CodonTable
-            code_text = (row.get("mt_code") or "").strip()
-            code = int(code_text) if code_text else None
-            if code is not None and code not in CodonTable.unambiguous_dna_by_id:
-                raise ValueError(f"Invalid genetic code for {name}")
-            reference_text = (row.get("reference_gb") or "").strip()
-            target = row["target_taxon"].strip()
-            from reference_selection import taxonomy_from_row
-            lineage = taxonomy_from_row(row)
-            if reference_text:
-                from Bio import SeqIO
-                reference = refpath(reference_text)
-                record = SeqIO.read(reference,"genbank")
-                if code is None:
-                    codes = {int(x) for feature in record.features if feature.type == "CDS"
-                             for x in feature.qualifiers.get("transl_table", [])}
-                    if len(codes) != 1:
-                        raise ValueError(f"{name}: reference does not specify a unique genetic code; fill mt_code")
-                    code = next(iter(codes))
-                reference_data(record,code)
-                choice = {"accession":record.id,"organism":record.annotations.get("organism", ""),
-                          "match_level":"manual_override","match_rank":"manual","matched_taxon":"",
-                          "eligible_candidates":1}
-            else:
-                from reference_selection import load_catalog, select_reference
-                if catalog is None:
-                    catalog = load_catalog(args.genbank_dir, reference_data, args.reference_index)
-                choice = select_reference(catalog,target,code,args.reference_match,
-                                          args.min_genome_bp,args.max_genome_bp,lineage,args.reference_min_rank)
-                reference = Path(choice["path"])
-                if code is None:
-                    code = choice["mt_code"]
-            if code not in CodonTable.unambiguous_dna_by_id:
-                raise ValueError(f"Invalid inferred genetic code for {name}")
-            reference_choices.append({"sample":name,"target_taxon":target,"reference_gb":str(reference),
-                                      "reference_accession":choice["accession"],"reference_taxon":choice["organism"],
-                                      "match_level":choice["match_level"],"mt_code":code,
-                                      "match_rank":choice["match_rank"],"matched_taxon":choice["matched_taxon"],
-                                      "code_source":"sample_sheet" if code_text else "GenBank_CDS",
-                                      "eligible_candidates":choice["eligible_candidates"]})
-            print(f"Reference [{name}]: {choice['accession']} ({choice['organism']}); {choice['match_level']} "
-                  f"[{choice['matched_taxon']}]; code {code}",flush=True)
-            seed = refpath(row["seed_fasta"]) if row.get("seed_fasta") else None
-            resolved_samples.append({**row,"sample":name,"target_taxon":target,"mt_code":code,
-                                     "reference_gb":str(reference),"seed_fasta":str(seed) if seed else ""})
-            samples.append(Sample(name,*pairs[name],target,code,reference,seed,lineage))
-    if not samples:
+        reader = csv.DictReader(f, delimiter="\t")
+        input_columns = list(reader.fieldnames or [])
+        if not {"sample","target_taxon"}.issubset(input_columns):
+            raise ValueError("Sample sheet needs sample and target_taxon columns")
+        rows = list(reader)
+    seen = set()
+    selected = []
+    for row in rows:
+        name = (row.get("sample") or "").strip()
+        if name in seen or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ValueError(f"Duplicate or unsafe sample name: {name}")
+        seen.add(name)
+        if args.only_sample and name != args.only_sample:
+            continue
+        if name not in pairs or not (row.get("target_taxon") or "").strip():
+            raise ValueError(f"Missing FASTQs or target_taxon for {name}")
+        selected.append(row)
+    if not selected:
         raise ValueError("No samples selected")
+    if any(not (row.get("reference_gb") or "").strip() for row in selected):
+        from reference_selection import load_catalog
+        catalog = load_catalog(args.genbank_dir, reference_data, args.reference_index)
+    for row in selected:
+        name = row["sample"].strip()
+        try:
+            sample, report, resolved = resolve_sample_reference(row,args,pairs[name],catalog)
+        except (ValueError,OSError) as error:
+            print(f"ERROR [{name}, reference]: {error}; continuing other samples",file=sys.stderr,flush=True)
+            failure = {"sample":name,"target_taxon":row["target_taxon"].strip(),
+                       "selection_status":"unavailable","reference_error":str(error)}
+            reference_failures.append(failure)
+            reference_choices.append(failure)
+            continue
+        samples.append(sample)
+        reference_choices.append(report)
+        resolved_samples.append(resolved)
+        print(f"Reference [{name}]: {report['reference_accession']} ({report['reference_taxon']}); "
+              f"{report['match_level']} [{report['matched_taxon']}]; code {report['mt_code']}",flush=True)
+        for warning in report["annotation_warnings"]:
+            print(f"  Reference warning [{name}]: {warning['gene']} {warning['location']}: {warning['reason']}",flush=True)
     # A scoped output lock prevents two workers writing the shared BOLD index or cohort files.
     import fcntl
     args.outdir.mkdir(parents=True,exist_ok=True)
@@ -1166,7 +1220,10 @@ def main(argv=None,require_pipeline=False):
             raise ValueError("Another pipeline is writing this output directory")
         write_table(args.outdir/"reference_selection.tsv",reference_choices,
                     ["sample","target_taxon","reference_gb","reference_accession","reference_taxon",
-                     "match_level","match_rank","matched_taxon","mt_code","code_source","eligible_candidates"])
+                     "match_level","match_rank","matched_taxon","mt_code","code_source","eligible_candidates",
+                     "selection_status","annotation_warnings","reference_error"])
+        write_table(args.outdir/"reference_failures.tsv",reference_failures,
+                    ["sample","target_taxon","selection_status","reference_error"])
         core_columns = ["sample","target_taxon","mt_code","reference_gb","seed_fasta"]
         write_table(args.outdir/"resolved_samples.tsv",resolved_samples,
                     core_columns + [column for column in input_columns if column not in core_columns])
@@ -1174,51 +1231,78 @@ def main(argv=None,require_pipeline=False):
             atomic_json(args.outdir/"environment_selection.json",environment_rows)
             write_table(args.outdir/"environment_selection.tsv",environment_rows,
                         ["tool","status","environment","entrypoint","alternatives","note"])
-        metadata = load_bold_metadata(args.bold_metadata)
-        from Bio import SeqIO
-        ids = set()
-        for rec in SeqIO.parse(args.bold_fasta,"fasta"):
-            if rec.id in ids or rec.id not in metadata:
-                raise ValueError(f"Duplicate BOLD sequence ID or missing metadata: {rec.id}")
-            ids.add(rec.id)
-        if not ids:
-            raise ValueError("Empty BOLD reference FASTA")
-        dbdir = args.outdir/"bold_reference"
-        dbdir.mkdir(exist_ok=True)
-        bdb = dbdir/"coi"
-        brunner = Runner(args.outdir,commands,args.resume,args.dry_run)
-        bold_stamp = {"fasta":stamp(args.bold_fasta),"metadata_sha256":digest_file(args.bold_metadata)}
-        if (dbdir/"source.json").exists() and json.loads((dbdir/"source.json").read_text()) != bold_stamp:
-            raise ValueError("BOLD references changed; choose a new output directory")
-        if not brunner.run("bold_index","makeblastdb",["-in",args.bold_fasta,"-dbtype","nucl","-parse_seqids","-out",bdb],
-                           dbdir,args.validation_timeout*60,[dbdir/"coi.nsq"]):
-            raise RuntimeError("Could not build BOLD BLAST database")
-        atomic_json(dbdir/"source.json",bold_stamp)
         results = []
-        for sample in samples:
-            print(f"\n=== {sample.sample} ===",flush=True)
-            try:
-                results.append(process_sample(sample,args,commands,metadata,bdb))
-            except (ValueError,RuntimeError,OSError) as e:
-                print(f"ERROR [{sample.sample}]: {e}",file=sys.stderr)
-                results.append({"sample":sample.sample,"status":"failed","error":str(e)})
+        # ITSME does not depend on a mitochondrial reference. Keep its checkpoint
+        # tree separate so reference failures can be repaired without overwriting it.
+        if reference_failures and args.branch == "full":
+            fallback_args = argparse.Namespace(**vars(args))
+            fallback_args.pipeline = "itsme"
+            fallback_args.samples = None
+            fallback_args.only_sample = None
+            fallback_args.outdir = args.outdir/"unresolved_references_itsme"
+            run_itsme_only(fallback_args,{r["sample"]:pairs[r["sample"]] for r in reference_failures})
+            independent = json.loads((fallback_args.outdir/"last_invocation.json").read_text())
+            itsme_results = {r["sample"]:r for r in independent["results"]}
+        else:
+            itsme_results = {}
+        for failure in reference_failures:
+            result = {"sample":failure["sample"],"target_taxon":failure["target_taxon"],
+                      "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
+                      "status":"reference_unavailable","error":failure["reference_error"],
+                      "failed_stages":["reference_selection"]}
+            independent = itsme_results.get(failure["sample"])
+            if independent:
+                result.update(itsme_ok=independent.get("itsme_ok",False),
+                              itsme_output=independent.get("itsme_output",""))
+                if independent["status"] == "failed":
+                    result["failed_stages"].append("itsme")
+                    result["error"] += "; ITSME: " + independent.get("error","execution failed")
+            results.append(result)
+        if samples:
+            metadata = load_bold_metadata(args.bold_metadata)
+            from Bio import SeqIO
+            ids = set()
+            for rec in SeqIO.parse(args.bold_fasta,"fasta"):
+                if rec.id in ids or rec.id not in metadata:
+                    raise ValueError(f"Duplicate BOLD sequence ID or missing metadata: {rec.id}")
+                ids.add(rec.id)
+            if not ids:
+                raise ValueError("Empty BOLD reference FASTA")
+            dbdir = args.outdir/"bold_reference"
+            dbdir.mkdir(exist_ok=True)
+            bdb = dbdir/"coi"
+            brunner = Runner(args.outdir,commands,args.resume,args.dry_run)
+            bold_stamp = {"fasta":stamp(args.bold_fasta),"metadata_sha256":digest_file(args.bold_metadata)}
+            if (dbdir/"source.json").exists() and json.loads((dbdir/"source.json").read_text()) != bold_stamp:
+                raise ValueError("BOLD references changed; choose a new output directory")
+            if not brunner.run("bold_index","makeblastdb",["-in",args.bold_fasta,"-dbtype","nucl","-parse_seqids","-out",bdb],
+                               dbdir,args.validation_timeout*60,[dbdir/"coi.nsq"]):
+                raise RuntimeError("Could not build BOLD BLAST database")
+            atomic_json(dbdir/"source.json",bold_stamp)
+            for sample in samples:
+                print(f"\n=== {sample.sample} ===",flush=True)
+                try:
+                    results.append(process_sample(sample,args,commands,metadata,bdb))
+                except (ValueError,RuntimeError,OSError) as e:
+                    print(f"ERROR [{sample.sample}]: {e}",file=sys.stderr)
+                    results.append({"sample":sample.sample,"status":"failed","error":str(e)})
         # Rebuild cohort table from saved per-sample summaries, preserving --only-sample runs.
         previous = {p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
         previous.update({r["sample"]:r for r in results})
         write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
                     ["sample","pipeline","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
                      "circular","target_status","genes_recovered","genes_expected","candidate_count",
-                     "itsme_ok","wgs_ok","annotation_ok","failed_stages","error"],",")
+                     "itsme_ok","itsme_output","wgs_ok","annotation_ok","failed_stages","error"],",")
         gene_rows = []
         for name, row in previous.items():
             path = args.outdir/name/"final/gene_recovery.csv"
-            if row["status"] != "failed" and path.exists():
+            if row["status"] not in {"failed","reference_unavailable"} and path.exists():
                 with path.open(newline="") as f:
                     gene_rows.extend(csv.DictReader(f))
         write_table(args.outdir/"cohort_gene_recovery.csv",gene_rows,GENE_FIELDS,",")
         atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,
                     "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),"results":results})
-        return 1 if any(r["status"] in {"failed","recovered_annotation_failed"} or r.get("wgs_ok") is False
+        return 1 if any(r["status"] in {"failed","reference_unavailable","recovered_annotation_failed"} or r.get("wgs_ok") is False
                        or r.get("itsme_ok") is False or (not r.get("winning_method") and r.get("failed_stages"))
                        for r in results) else 0
 

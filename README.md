@@ -1,4 +1,4 @@
-# MitoGenomeScanner 2.0.4
+# MitoGenomeScanner 2.0.5
 
 **Automatic references:** retain the full `kingdom`, `phylum`, `class`, `order`,
 `family`, `genus`, and `species` columns when available. `sample` and `target_taxon`
@@ -115,13 +115,26 @@ Fill the tab-separated columns:
 | `seed_fasta` | Optional mitochondrial/COI nucleotide seed. If blank, the controller derives COX1 from `reference_gb`. |
 | `kingdom`, `phylum`, `class`, `order`, `family`, `genus`, `species` | Recommended full input hierarchy. Rank column names may be lower or title case. `species` may contain the epithet or full binomial. Missing ranks remain blank. |
 
-The reference must have uniquely named, complete CDS/rRNA genes, including COX1,
+The reference must have uniquely named CDS/rRNA genes, including COX1,
 at least three CDS genes and at least one rRNA. The expected CDS/rRNA gene set is
 derived from that reference; it does not assume every animal has exactly 13 CDS
 genes. An unrepresentative or incomplete reference weakens this screen. Repeated
-gene names, fuzzy feature boundaries, ambiguous reference genes or multiple
-GenBank records are rejected for explicit curation. This first version does not
-model duplicated genes or multipartite/linear mitochondrial genomes.
+gene names, ambiguous reference gene DNA or multiple GenBank records are rejected
+for explicit curation. Before/after (`<`/`>`) annotation boundaries are allowed as
+homology queries when the extracted DNA is unambiguous; uncertain CDS boundaries
+also require an explicit GenBank protein translation. They are reported in
+`references/reference_quality.json` and the final summary, and cannot establish
+full-length gene boundaries. Other uncertain coordinate types remain rejected.
+rRNA product labels `s-rRNA`/`l-rRNA`, 12S/16S and small/large subunit labels are
+recognized when `/gene` is absent. This version does not model duplicated genes
+or multipartite/linear mitochondrial genomes.
+
+An individual reference rejection no longer aborts the cohort. Other samples
+continue, and `both` runs independent ITSME for unresolved samples in
+`OUT/unresolved_references_itsme/SAMPLE/itsme/attempt_NNN/output/`. Such samples
+are reported as `reference_unavailable`, with the reason in
+`reference_failures.tsv`; the command still exits nonzero to flag incomplete work.
+No mitochondrial recovery or WGS is attempted for those unresolved samples.
 
 From GenBank the controller derives: a mitochondrial FASTA for mtGrasp, COX1 seed,
 CDS translations for completeness screening, and CDS/rRNA nucleotide labels for

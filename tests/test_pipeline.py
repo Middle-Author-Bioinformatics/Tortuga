@@ -436,3 +436,48 @@ def test_controller_shell_uses_shared_launcher(tmp_path):
     env=dict(os.environ,MITO_PYTHON=sys.executable)
     p=subprocess.run(["bash",str(ROOT/"pipeline_controller.sh"),"--version"],env=env,capture_output=True,text=True)
     assert p.returncode==0 and p.stdout.strip()==m.VERSION
+
+
+@pytest.mark.parametrize("combined",[False,True])
+def test_reference_failure_does_not_block_other_samples_or_independent_itsme(fixture,tmp_path,combined):
+    import shutil
+    for mate in [1,2]:
+        shutil.copyfile(fixture["reads"]/f"W30877_{mate}.fq.gz",fixture["reads"]/f"NOREF_{mate}.fq.gz")
+    m.write_table(fixture["sheet"],[
+        {"sample":"NOREF","target_taxon":"Unknown species","mt_code":5,"reference_gb":str(tmp_path/"missing.gb")},
+        {"sample":"W30877","target_taxon":"Target species","mt_code":5,"reference_gb":str(tmp_path/"reference.gb")}
+    ],["sample","target_taxon","mt_code","reference_gb"])
+    extra=["--pipeline","both" if combined else "mitolooper"]
+    if combined:
+        extra += ["--itsme-db",str(fixture["itsmedb"])]
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},extra)
+    assert code==1
+    assert summary(fixture)["status"]=="recovered_annotated"
+    invocation=json.loads((fixture["out"]/"last_invocation.json").read_text())
+    unavailable=next(row for row in invocation["results"] if row["sample"]=="NOREF")
+    assert unavailable["status"]=="reference_unavailable"
+    assert "reference_selection" in unavailable["failed_stages"]
+    with (fixture["out"]/"reference_selection.tsv").open() as f:
+        choices={r["sample"]:r for r in csv.DictReader(f,delimiter="\t")}
+    assert choices["NOREF"]["selection_status"]=="unavailable"
+    assert choices["W30877"]["selection_status"]=="available"
+    assert sum(event["tool"]=="itsme" for event in events)==(2 if combined else 0)
+    if combined:
+        assert unavailable["itsme_ok"] is True
+        assert Path(unavailable["itsme_output"]).joinpath("run_summary.txt").exists()
+        assert "unresolved_references_itsme" in unavailable["itsme_output"]
+    assert not (fixture["out"]/"NOREF/01_read_recovery").exists()
+
+
+def test_no_usable_references_still_runs_itsme_without_building_bold(fixture,tmp_path):
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species",
+                                      "mt_code":5,"reference_gb":str(tmp_path/"missing.gb")}],
+                  ["sample","target_taxon","mt_code","reference_gb"])
+    code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"])])
+    assert code==1
+    assert [event["tool"] for event in events]==["itsme"]
+    assert not (fixture["out"]/"bold_reference").exists()
+    result=json.loads((fixture["out"]/"last_invocation.json").read_text())["results"][0]
+    assert result["status"]=="reference_unavailable" and result["itsme_ok"] is True
+    code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--resume"])
+    assert code==1 and len(events)==1

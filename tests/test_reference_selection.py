@@ -158,3 +158,70 @@ def test_deterministic_ties_and_incremental_cache(tmp_path):
     assert len(calls)==3
     b.unlink()
     assert len(load_catalog(tmp_path,validate))==1
+
+
+def test_real_orbiniid_record_accepts_boundary_annotations_and_rrna_products(tmp_path):
+    from mito_pipeline import reference_boundary_warnings, reference_files, Sample
+    source=Path(__file__).parent/"data/NC_007933.1.gb"
+    record=SeqIO.read(source,"genbank")
+    proteins,rnas,labels,seed=reference_data(record,5)
+    assert len(proteins)==13 and {name for name,seq in rnas}=={"rrns","rrnl"}
+    assert len(seed)==1563 and set(seed.upper())<=set("ACGT")
+    warnings=reference_boundary_warnings(record)
+    assert {row["gene"] for row in warnings}=={"cox1","cox3"}
+    catalog=load_catalog(source.parent,reference_data,tmp_path/"index.sqlite")
+    chosen=select_reference(catalog,"Theodisca dendritica",match="hierarchy",
+                            lineage={"family":"Orbiniidae","phylum":"Annelida"})
+    assert chosen["accession"]=="NC_007933.1" and chosen["match_rank"]=="family"
+    assert chosen["annotation_warnings"]==warnings
+    refs=reference_files(Sample("test",source,source,"Theodisca dendritica",5,source),tmp_path/"refs")
+    assert refs["annotation_warnings"]==warnings
+    import json
+    assert json.loads((tmp_path/"refs/reference_quality.json").read_text())["annotation_warnings"]==warnings
+
+
+def test_uncertain_boundaries_do_not_allow_ambiguous_sequence_or_missing_translation():
+    from Bio.SeqFeature import WithinPosition
+    record=SeqIO.read(Path(__file__).parent/"data/NC_007933.1.gb","genbank")
+    first=next(f for f in record.features if f.type=="CDS")
+    original=record.seq
+    record.seq=Seq("N"+str(original)[1:])
+    with pytest.raises(ValueError,match="ambiguous DNA"):
+        reference_data(record,5)
+    record.seq=original
+    translation=first.qualifiers.pop("translation")
+    with pytest.raises(ValueError,match="without an annotated translation"):
+        reference_data(record,5)
+    first.qualifiers["translation"]=translation
+    first.location=FeatureLocation(WithinPosition(0,0,3),1563,strand=1)
+    with pytest.raises(ValueError,match="unsupported uncertain coordinates"):
+        reference_data(record,5)
+
+
+def test_exact_boundaries_preferred_within_same_taxonomic_tier(tmp_path):
+    from Bio.SeqFeature import BeforePosition
+    fuzzy=make_reference(tmp_path,"A_FUZZY")
+    make_reference(tmp_path,"Z_EXACT")
+    record=SeqIO.read(fuzzy,"genbank")
+    record.features[1].location=FeatureLocation(BeforePosition(0),600,strand=1)
+    SeqIO.write(record,fuzzy,"genbank")
+    catalog=load_catalog(tmp_path,reference_data)
+    assert select_reference(catalog,"Target species")["accession"]=="Z_EXACT"
+
+
+def test_old_rejection_cache_is_rebuilt_and_rejected_metadata_retained(tmp_path):
+    import json
+    import sqlite3
+    path=make_reference(tmp_path,"OLD")
+    catalog=load_catalog(tmp_path,reference_data)
+    index=tmp_path/"tortuga_reference_index.sqlite"
+    with sqlite3.connect(index) as db:
+        db.execute("UPDATE entries SET version=1,data=?",(json.dumps({"path":str(path),"error":"old rejection"}),))
+    catalog=load_catalog(tmp_path,reference_data)
+    assert not catalog[0]["error"]
+    record=SeqIO.read(path,"genbank")
+    record.seq=Seq("N"+str(record.seq)[1:])
+    SeqIO.write(record,path,"genbank")
+    rejected=load_catalog(tmp_path,reference_data)[0]
+    assert "ambiguous DNA" in rejected["error"]
+    assert rejected["organism"]=="Target species" and "Targetidae" in rejected["taxonomy"]

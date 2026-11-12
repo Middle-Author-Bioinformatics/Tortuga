@@ -1,6 +1,6 @@
 # One controller for ITSME, MitoLooper, or both
 
-## Automatic GenBank references (2.0.4)
+## Automatic GenBank references (2.0.5)
 
 Only `sample` and `target_taxon` are required in mitochondrial sample sheets.
 Retain the full taxonomic hierarchy whenever available: `kingdom`, `phylum`,
@@ -12,7 +12,7 @@ contains all twelve real targets and the hierarchy provided in taxaIDs.xlsx.
 The existing template's `reference_gb`, `mt_code`, and `seed_fasta` cells may be
 left blank. An explicit reference path or genetic code still overrides selection.
 
-The controller scans `~/NOAA/mitos_genbank` by default, configurable with
+The controller scans `/home/ark/MAB/NOAA/mitos_genbank` by default, configurable with
 `--genbank-dir`. It reads GenBank organism/lineage annotations, not filenames or
 sequence similarity. It first selects records matching the exact organism or
 lineage name (case-insensitive, with whitespace normalized). If no suitable exact
@@ -24,7 +24,8 @@ target selects within that explicitly named lineage. By default, no search
 extends beyond the supplied family. `--reference-min-rank order`, `class`, or
 `phylum` explicitly permits broader searches through the corresponding supplied
 ranks. A supplied phylum must agree with the reference's annotated lineage.
-If no reference matches within the permitted scope, selection stops with an error.
+If no reference matches within the permitted scope, that sample is reported as
+`reference_unavailable`; other samples continue and the batch exits nonzero.
 It does not broaden `target_taxon` to get a seed. The nearest matching rank takes
 precedence over annotation-quality ties at more distant ranks. Exact-name matching
 still does not resolve nomenclatural synonyms automatically, but family metadata
@@ -33,7 +34,11 @@ can provide a same-family seed despite a renamed species or genus.
 Automatic candidates must identify a mitochondrial organelle and animal lineage,
 pass the same CDS/rRNA validation used by recovery, and meet the configured genome
 length and any supplied genetic-code filters. Partial/incomplete descriptions are
-excluded. Among matches, complete-genome descriptions, larger annotated CDS/rRNA
+excluded. Before/after annotation boundaries are accepted as homology queries
+with a warning when DNA is unambiguous and uncertain CDS features have annotated
+protein translations. Common rRNA product names are recognized without `/gene`.
+Uncertain boundaries cannot establish full-length gene recovery. Among matches,
+complete-genome descriptions, fewer boundary warnings, larger annotated CDS/rRNA
 gene sets and circular topology are preferred; accession/path settle equal ties.
 These rules select a usable taxonomic reference, not a proven closest relative
 or independently curated perfect genome. This workflow still uses `animal_mt`.
@@ -44,7 +49,8 @@ conflicting codes require a sample-sheet override. A manually specified GenBank
 reference can supply a unique code from its CDS annotations as well.
 
 The first scan of a large collection takes time; unchanged records are reused
-from `tortuga_reference_index.sqlite` in that directory. `--reference-index` can
+from `tortuga_reference_index.sqlite` in that directory. Version 2.0.5 automatically
+refreshes older cached validations once; do not delete the index manually. `--reference-index` can
 place this cache elsewhere. New/changed files are re-inspected and removed files
 are pruned. `reference_selection.tsv` records the selected accession, organism,
 match level, actual matched rank/name, code source and path. `resolved_samples.tsv`
@@ -57,22 +63,30 @@ the BOLD gate still requires Rathbunixa occidentalis, not just Pinnotheridae.
 For the user's current Tortuga installation and prepared databases:
 
 ```bash
-bash ~/bin/Tortuga/pipeline_controller.sh \
+bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
     --pipeline both \
-    -i ~/NOAA/CA_intertidal/raw_reads \
-    --samples ~/NOAA/CA_intertidal/CA_intertidal_samples.tsv \
-    --genbank-dir ~/NOAA/mitos_genbank \
-    --bold-fasta ~/NOAA/BOLD/prepared_fixed/coi.fasta \
-    --bold-metadata ~/NOAA/BOLD/prepared_fixed/metadata.tsv \
-    --mitos-refdir ~/NOAA/mitos_data \
+    -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
+    --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
+    --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
+    --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
+    --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
+    --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
-    -o ~/NOAA/CA_intertidal/both_results_v204 \
+    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v205 \
     -t 32 -m 200
 ```
 
 Use `--pipeline mitolooper` to omit ITSME. New controller versions/options require
 a fresh output root; existing older-version checkpoint directories are retained.
+
+If a sample has no usable reference, `both` still runs its ITSME stage under
+`OUT/unresolved_references_itsme/SAMPLE/itsme/attempt_NNN/output/`; it skips that
+sample's mitochondrial recovery and WGS. `reference_selection.tsv` records the
+failure and any boundary warnings, and `reference_failures.tsv` lists unresolved
+samples. The cohort and invocation summaries retain `reference_unavailable` and
+ITSME success/failure separately. Resume with `--resume` to reuse completed
+independent ITSME attempts; use a new output root after a version change.
 
 The Rhizophysa sample still requires separate linear-genome evaluation; this
 release changes reference selection, not the circularity acceptance criterion.
@@ -109,8 +123,8 @@ Conda installations.
 ```bash
 bash ~/bin/MitoGenomeScanner/pipeline_controller.sh \
     --pipeline itsme \
-    -i ~/NOAA/CA_intertidal/raw_reads \
-    -o ~/NOAA/CA_intertidal/itsme_results \
+    -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
+    -o /home/ark/MAB/NOAA/CA_intertidal/itsme_results \
     -t 60 -m 200
 ```
 
@@ -131,14 +145,14 @@ Use your actual reference paths in place of the capitalized placeholders:
 ```bash
 bash ~/bin/MitoGenomeScanner/pipeline_controller.sh \
     --pipeline both \
-    -i ~/NOAA/CA_intertidal/raw_reads \
+    -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
     --samples ~/bin/MitoGenomeScanner/samples.tsv \
     --bold-fasta /PATH/TO/bold/coi.fasta \
     --bold-metadata /PATH/TO/bold/metadata.tsv \
     --mitos-refdir /PATH/TO/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
-    -o ~/NOAA/CA_intertidal/both_results \
+    -o /home/ark/MAB/NOAA/CA_intertidal/both_results \
     -t 60 -m 200
 ```
 

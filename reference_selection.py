@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 SUFFIXES = {".gb", ".gbk", ".gbff", ".genbank"}
 RANKS = ("species", "genus", "family", "order", "class", "phylum", "kingdom")
 
@@ -33,10 +33,23 @@ def taxonomy_from_row(row):
 
 def describe(path, validator):
     from Bio import SeqIO
+    from mito_pipeline import reference_boundary_warnings
     records = list(SeqIO.parse(path, "genbank"))
     if len(records) != 1:
         raise ValueError("Reference must contain one record")
     record = records[0]
+    row = {"path":str(path),"accession":record.id,"organism":record.annotations.get("organism", ""),
+           "taxonomy":record.annotations.get("taxonomy", []),"length_bp":len(record.seq),
+           "mt_code":None,"annotation_warnings":[],"error":""}
+    try:
+        row.update(describe_validated(record,validator))
+        row["annotation_warnings"] = reference_boundary_warnings(record)
+    except (ValueError,TypeError,KeyError,AttributeError,IndexError) as error:
+        row["error"] = str(error) or type(error).__name__
+    return row
+
+
+def describe_validated(record, validator):
     source = [f for f in record.features if f.type == "source"]
     organelles = [v for f in source for v in f.qualifiers.get("organelle", [])]
     if not any("mitochond" in normalized(x) for x in organelles + [record.description]):
@@ -52,7 +65,7 @@ def describe(path, validator):
         raise ValueError("Reference CDS annotations specify conflicting genetic codes")
     code = next(iter(codes)) if codes else None
     proteins, rnas, _, _ = validator(record, code or 1)
-    return {"path": str(path), "accession": record.id,
+    return {"accession": record.id,
             "organism": record.annotations.get("organism", ""),
             "taxonomy": taxonomy, "mt_code": code,
             "length_bp": len(record.seq), "cds_count": len(proteins),
@@ -142,7 +155,7 @@ def select_reference(catalog, target, mt_code=None, match="genus", min_bp=10000,
         codes = {item[0]["mt_code"] for item in matches}
         if None in codes or len(codes) != 1:
             raise ValueError(f"Cannot infer a unique mitochondrial code for {target!r}; fill mt_code in the sample sheet")
-    matches.sort(key=lambda item: (-int(item[0]["complete"]),
+    matches.sort(key=lambda item: (-int(item[0]["complete"]),len(item[0].get("annotation_warnings",[])),
                                   -item[0]["cds_count"], -item[0]["rrna_count"],
                                   -int(item[0]["circular"]), item[0]["accession"], item[0]["path"]))
     row, level, rank, taxon, _ = matches[0]

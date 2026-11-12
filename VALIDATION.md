@@ -1,8 +1,8 @@
-# Validation - 2026-11-10
+# Validation - 2026-11-12
 
-Controller version: 2.0.4.
+Controller version: 2.0.5.
 
-- 46 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 53 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -31,6 +31,15 @@ Controller version: 2.0.4.
   same-family fallback, closer-genus precedence, explicit order-scope limits,
   phylum disagreement, family-level code conflicts, complete metadata retention
   and successful target confirmation when the seed reference is a different genus.
+
+- Real-record regression: NCBI NC_007933.1 (Orbinia latreillii) supplies 13 CDS,
+  two rRNAs and a 1,563 bp unambiguous COX1 seed, with COX1/COX3 boundary warnings.
+- New safety cases retain ambiguous-base rejection, require annotated translation
+  for uncertain CDS boundaries, reject unsupported uncertain coordinates, prefer
+  exact-boundary references within a tier and refresh old validation caches.
+- Cohort tests verify continued recovery after reference failure, independent
+  ITSME in combined mode, honest failure reporting, no BOLD index when no references
+  are usable and unchanged independent-ITSME resume caching.
 
 The integration tests use CLI doubles and synthetic references, not the actual
 external assembly programs. No project FASTQs were supplied here, and real

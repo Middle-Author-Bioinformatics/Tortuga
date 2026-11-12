@@ -1,3 +1,20 @@
+# 2.0.5 - 2026-11-12
+
+- Distinguish uncertain annotation boundaries from ambiguous nucleotide bases.
+  Permit before/after boundaries for homology queries with unambiguous gene DNA;
+  require explicit translations for uncertain CDS annotations. Report warnings
+  in reference selection, reference quality and sample summaries. Reject genuinely
+  ambiguous genes and unsupported uncertain coordinate types.
+- Recognize rRNA product labels s-rRNA/l-rRNA and small/large subunit aliases when
+  gene qualifiers are absent. NC_007933.1 now yields 13 CDS and both rRNAs.
+- Prefer fewer boundary warnings within the same taxonomic match tier. Refresh
+  old catalog validations automatically; retain metadata for rejected records.
+- Continue other samples after individual reference errors. In both mode, run
+  independent ITSME for unresolved samples; report reference_unavailable and a
+  nonzero batch status, without attempting their mitochondrial recovery or WGS.
+- Added seven regression cases covering the public NC_007933.1 record, invalid
+  DNA/annotations, cache refresh, reference ranking and batch continuation.
+
 # 2.0.4 - 2026-11-10
 
 - Restored the full supplied taxonomy and source identifiers in the twelve-sample
