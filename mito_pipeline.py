@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.0.2"
+VERSION = "2.0.4"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -158,6 +158,7 @@ class Sample:
     mt_code: int
     reference_gb: Path
     seed_fasta: Path | None = None
+    taxonomy: dict = dataclasses.field(default_factory=dict)
 
 
 def discover_pairs(folder):
@@ -265,20 +266,12 @@ class Runner:
         return row["status"] == "ok"
 
 
-def reference_files(sample, folder):
-    """Derive seeds and per-gene completeness queries from an annotated reference."""
-    from Bio import SeqIO
+def reference_data(record, mt_code):
+    """Validate and extract reference genes without writing files."""
     from Bio.Seq import Seq
     from Bio.SeqFeature import ExactPosition
-    folder.mkdir(parents=True, exist_ok=True)
-    records = list(SeqIO.parse(sample.reference_gb, "genbank"))
-    if len(records) != 1:
-        raise ValueError(f"{sample.sample}: reference_gb must contain ONE mitogenome")
-    record = records[0]
     if not record.seq or set(str(record.seq).upper()) - set("ACGTRYSWKMBDHVN"):
         raise ValueError("Invalid nucleotide reference")
-    fasta_write(folder/"reference.fasta", record.id, str(record.seq))
-    SeqIO.write(record,folder/"reference.gb","genbank")
     proteins, rnas, labels, names = [], [], [], set()
     seed = None
     for feature in record.features:
@@ -303,7 +296,7 @@ def reference_files(sample, folder):
             aa = feature.qualifiers.get("translation", [""])[0]
             if not aa:
                 offset = int(feature.qualifiers.get("codon_start", [1])[0])-1
-                aa = str(Seq(nt[offset:]).translate(table=sample.mt_code)).rstrip("*")
+                aa = str(Seq(nt[offset:]).translate(table=mt_code)).rstrip("*")
             if "*" in aa.rstrip("*") or not aa:
                 raise ValueError(f"Invalid protein translation for reference {gene}")
             proteins.append((gene, aa.rstrip("*")))
@@ -313,6 +306,20 @@ def reference_files(sample, folder):
             rnas.append((gene, nt))
     if seed is None or len(proteins) < 3 or not rnas:
         raise ValueError("Reference must annotate COX1, at least 3 CDS genes, and rRNA genes")
+    return proteins, rnas, labels, seed
+
+
+def reference_files(sample, folder):
+    """Derive seeds and per-gene completeness queries from an annotated reference."""
+    from Bio import SeqIO
+    records = list(SeqIO.parse(sample.reference_gb, "genbank"))
+    if len(records) != 1:
+        raise ValueError(f"{sample.sample}: reference_gb must contain ONE mitogenome")
+    record = records[0]
+    proteins, rnas, labels, seed = reference_data(record, sample.mt_code)
+    folder.mkdir(parents=True, exist_ok=True)
+    fasta_write(folder/"reference.fasta", record.id, str(record.seq))
+    SeqIO.write(record,folder/"reference.gb","genbank")
     for filename, rows in [("proteins.faa", proteins), ("rrna.fasta", rnas), ("labels.fasta", labels)]:
         with (folder/filename).open("w") as f:
             for name, seq in rows:
@@ -833,7 +840,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
               "unresolved_candidate" if best else "no_candidate")
     summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
                "status": "planned" if args.dry_run else status,
-               "target_taxon": sample.target_taxon, "mt_code": sample.mt_code,
+               "target_taxon": sample.target_taxon, "taxonomy": sample.taxonomy, "mt_code": sample.mt_code,
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
                "annotation_ok": annotation_ok, "annotation_dir": str(mitos/"output") if winner else "",
@@ -864,7 +871,14 @@ def parser(require_pipeline=False):
     p.add_argument("--pipeline",choices=["itsme","mitolooper","both"],required=require_pipeline,
                    help="Run nuclear rDNA only, mitochondrial recovery only, or both in workflow order")
     p.add_argument("--version", action="version", version=VERSION)
-    p.add_argument("--samples", type=Path, help="TSV with sample,target_taxon,mt_code,reference_gb[,seed_fasta]")
+    p.add_argument("--samples", type=Path, help="TSV with sample,target_taxon; optional mt_code,reference_gb,seed_fasta overrides")
+    p.add_argument("--genbank-dir", type=Path, default=Path.home()/"NOAA/mitos_genbank",
+                   help="Local annotated GenBank collection for automatic reference selection")
+    p.add_argument("--reference-match", choices=["exact","genus","hierarchy"], default="hierarchy",
+                   help="Prefer target, then genus and supplied higher ranks; default hierarchy stops at family")
+    p.add_argument("--reference-min-rank", choices=["family","order","class","phylum"], default="family",
+                   help="Broadest allowed hierarchy fallback; does not change the expected target for BOLD")
+    p.add_argument("--reference-index", type=Path, help="Optional SQLite index path; default: genbank-dir/tortuga_reference_index.sqlite")
     p.add_argument("--make-sample-sheet", type=Path, help="Write a blank metadata TSV and exit")
     p.add_argument("--only-sample", help="Run just one sample from the sheet")
     p.add_argument("-o", "--outdir", type=Path,help="Output directory; defaults to itsme_results, mito_results, or both_results for the selected pipeline")
@@ -1045,7 +1059,8 @@ def main(argv=None,require_pipeline=False):
         if args.make_sample_sheet.exists():
             raise ValueError("Sample sheet already exists; refusing to overwrite")
         write_table(args.make_sample_sheet, [{"sample": s} for s in pairs],
-                    ["sample","target_taxon","mt_code","reference_gb","seed_fasta"])
+                    ["sample","target_taxon","mt_code","reference_gb","seed_fasta",
+                     "kingdom","phylum","class","order","family","genus","species"])
         print(f"Wrote {args.make_sample_sheet}; fill metadata before running")
         return 0
     if args.pipeline=="itsme":
@@ -1071,8 +1086,12 @@ def main(argv=None,require_pipeline=False):
         raise ValueError("Invalid coverage or near-best fraction")
     commands,environment_rows=resolve_commands(args)
     samples = []
+    reference_choices = []
+    resolved_samples = []
+    catalog = None
     with args.samples.open(newline="") as f:
         rows = csv.DictReader(f, delimiter="\t")
+        input_columns = list(rows.fieldnames or [])
         seen = set()
         for row in rows:
             name = row["sample"].strip()
@@ -1090,11 +1109,51 @@ def main(argv=None,require_pipeline=False):
                     raise ValueError(f"Missing reference: {p}")
                 return p
             from Bio.Data import CodonTable
-            code = int(row["mt_code"])
-            if code not in CodonTable.unambiguous_dna_by_id:
+            code_text = (row.get("mt_code") or "").strip()
+            code = int(code_text) if code_text else None
+            if code is not None and code not in CodonTable.unambiguous_dna_by_id:
                 raise ValueError(f"Invalid genetic code for {name}")
-            samples.append(Sample(name,*pairs[name],row["target_taxon"].strip(),code,
-                                  refpath(row["reference_gb"]),refpath(row["seed_fasta"]) if row.get("seed_fasta") else None))
+            reference_text = (row.get("reference_gb") or "").strip()
+            target = row["target_taxon"].strip()
+            from reference_selection import taxonomy_from_row
+            lineage = taxonomy_from_row(row)
+            if reference_text:
+                from Bio import SeqIO
+                reference = refpath(reference_text)
+                record = SeqIO.read(reference,"genbank")
+                if code is None:
+                    codes = {int(x) for feature in record.features if feature.type == "CDS"
+                             for x in feature.qualifiers.get("transl_table", [])}
+                    if len(codes) != 1:
+                        raise ValueError(f"{name}: reference does not specify a unique genetic code; fill mt_code")
+                    code = next(iter(codes))
+                reference_data(record,code)
+                choice = {"accession":record.id,"organism":record.annotations.get("organism", ""),
+                          "match_level":"manual_override","match_rank":"manual","matched_taxon":"",
+                          "eligible_candidates":1}
+            else:
+                from reference_selection import load_catalog, select_reference
+                if catalog is None:
+                    catalog = load_catalog(args.genbank_dir, reference_data, args.reference_index)
+                choice = select_reference(catalog,target,code,args.reference_match,
+                                          args.min_genome_bp,args.max_genome_bp,lineage,args.reference_min_rank)
+                reference = Path(choice["path"])
+                if code is None:
+                    code = choice["mt_code"]
+            if code not in CodonTable.unambiguous_dna_by_id:
+                raise ValueError(f"Invalid inferred genetic code for {name}")
+            reference_choices.append({"sample":name,"target_taxon":target,"reference_gb":str(reference),
+                                      "reference_accession":choice["accession"],"reference_taxon":choice["organism"],
+                                      "match_level":choice["match_level"],"mt_code":code,
+                                      "match_rank":choice["match_rank"],"matched_taxon":choice["matched_taxon"],
+                                      "code_source":"sample_sheet" if code_text else "GenBank_CDS",
+                                      "eligible_candidates":choice["eligible_candidates"]})
+            print(f"Reference [{name}]: {choice['accession']} ({choice['organism']}); {choice['match_level']} "
+                  f"[{choice['matched_taxon']}]; code {code}",flush=True)
+            seed = refpath(row["seed_fasta"]) if row.get("seed_fasta") else None
+            resolved_samples.append({**row,"sample":name,"target_taxon":target,"mt_code":code,
+                                     "reference_gb":str(reference),"seed_fasta":str(seed) if seed else ""})
+            samples.append(Sample(name,*pairs[name],target,code,reference,seed,lineage))
     if not samples:
         raise ValueError("No samples selected")
     # A scoped output lock prevents two workers writing the shared BOLD index or cohort files.
@@ -1105,6 +1164,12 @@ def main(argv=None,require_pipeline=False):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Another pipeline is writing this output directory")
+        write_table(args.outdir/"reference_selection.tsv",reference_choices,
+                    ["sample","target_taxon","reference_gb","reference_accession","reference_taxon",
+                     "match_level","match_rank","matched_taxon","mt_code","code_source","eligible_candidates"])
+        core_columns = ["sample","target_taxon","mt_code","reference_gb","seed_fasta"]
+        write_table(args.outdir/"resolved_samples.tsv",resolved_samples,
+                    core_columns + [column for column in input_columns if column not in core_columns])
         if environment_rows:
             atomic_json(args.outdir/"environment_selection.json",environment_rows)
             write_table(args.outdir/"environment_selection.tsv",environment_rows,

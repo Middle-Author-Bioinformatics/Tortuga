@@ -2,6 +2,9 @@
 """Normalize a BOLD COI TSV export into a FASTA and auditable taxonomy table."""
 import argparse
 import csv
+# Public BOLD exports can contain fields exceeding csv's 128 KiB default.
+# This changes the parser limit; it does not preallocate a buffer of this size.
+csv.field_size_limit(2**31 - 1)
 import gzip
 import json
 from pathlib import Path
@@ -64,6 +67,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError,OSError,KeyError) as e:
+    except (ValueError,OSError,KeyError,csv.Error) as e:
         print(f"ERROR: {e}",file=sys.stderr)
         sys.exit(1)

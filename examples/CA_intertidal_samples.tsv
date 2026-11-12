@@ -1,13 +1,13 @@
-sample	target_taxon	mt_code	reference_gb	seed_fasta
-W30877				
-W30882				
-W30892				
-W30897				
-W30924				
-W30936				
-W30969				
-W31021				
-W31027				
-W31051				
-W31059				
-W31128				
+sample	target_taxon	kingdom	phylum	class	order	family	genus	species	aphia_id	original_identification	authority	mt_code	reference_gb	seed_fasta
+W30877	Rathbunixa occidentalis	Animalia	Arthropoda	Malacostraca	Decapoda	Pinnotheridae	Rathbunixa	occidentalis	1424662	Rathbunixa occidentalis	(Rathbun, 1894)			
+W30882	Rhizophysa	Animalia	Cnidaria	Hydrozoa	Siphonophorae	Rhizophysidae	Rhizophysa		135384	Rhizophysa	Péron & Lesueur, 1807			
+W30892	Theodisca dendritica	Animalia	Annelida	Polychaeta		Orbiniidae	Theodisca	dendritica	NA	Theodisca dendritica	NA			
+W30897	Balanus trigonus	Animalia	Arthropoda	Thecostraca	Balanomorpha	Balanidae	Balanus	trigonus	106223	Balanus trigonus	Darwin, 1854			
+W30924	Patiria miniata	Animalia	Echinodermata	Asteroidea	Valvatida	Asterinidae	Patiria	miniata	382131	Patiria miniata	(Brandt, 1835)			
+W30936	Ophiothrix spiculata	Animalia	Echinodermata	Ophiuroidea	Amphilepidida	Ophiotrichidae	Ophiothrix	spiculata	244192	Ophiothrix (Ophiothrix) spiculata	Le Conte, 1851			
+W30969	Polyandrocarpa zorritensis	Animalia	Chordata	Ascidiacea	Stolidobranchia	Styelidae	Polyandrocarpa	zorritensis	103895	Polyandrocarpa zorritensis	(Van Name, 1931)			
+W31021	Tethya californiana	Animalia	Porifera	Demospongiae	Tethyida	Tethyidae	Tethya	californiana	170942	Tethya californiana	de Laubenfels, 1932			
+W31027	Geodia	Animalia	Porifera	Demospongiae	Tetractinellida	Geodiidae	Geodia		132005	Geodia	Lamarck, 1815			
+W31051	Corambe pacifica	Animalia	Mollusca	Gastropoda	Nudibranchia	Corambidae	Corambe	pacifica	535677	Corambe pacifica	MacFarland & O'Donoghue, 1929			
+W31059	Oxydromus pugettensis	Animalia	Annelida	Polychaeta	Phyllodocida	Hesionidae	Oxydromus	pugettensis	710706	Oxydromus pugettensis	(Johnson, 1901)			
+W31128	Tivela stultorum	Animalia	Mollusca	Bivalvia	Venerida	Veneridae	Tivela	stultorum	367761	Tivela stultorum	(Mawe, 1823)			

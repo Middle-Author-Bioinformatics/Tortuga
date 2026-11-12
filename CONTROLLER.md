@@ -1,5 +1,92 @@
 # One controller for ITSME, MitoLooper, or both
 
+## Automatic GenBank references (2.0.4)
+
+Only `sample` and `target_taxon` are required in mitochondrial sample sheets.
+Retain the full taxonomic hierarchy whenever available: `kingdom`, `phylum`,
+`class`, `order`, `family`, `genus`, `species`. These columns now guide selection;
+they are not merely display metadata. Original IDs, authorities, and other input
+columns are preserved in `resolved_samples.tsv`. AphiaIDs are retained as AphiaIDs,
+not treated as NCBI taxonomic identifiers. The included CA intertidal example now
+contains all twelve real targets and the hierarchy provided in taxaIDs.xlsx.
+The existing template's `reference_gb`, `mt_code`, and `seed_fasta` cells may be
+left blank. An explicit reference path or genetic code still overrides selection.
+
+The controller scans `~/NOAA/mitos_genbank` by default, configurable with
+`--genbank-dir`. It reads GenBank organism/lineage annotations, not filenames or
+sequence similarity. It first selects records matching the exact organism or
+lineage name (case-insensitive, with whitespace normalized). If no suitable exact
+match exists, selection tries the supplied genus, then the supplied family.
+This is the default `--reference-match hierarchy` behavior. Missing ranks are
+skipped; they are never invented. `--reference-match genus` restores the narrower
+2.0.3 behavior, and `--reference-match exact` disables fallback. A genus/family
+target selects within that explicitly named lineage. By default, no search
+extends beyond the supplied family. `--reference-min-rank order`, `class`, or
+`phylum` explicitly permits broader searches through the corresponding supplied
+ranks. A supplied phylum must agree with the reference's annotated lineage.
+If no reference matches within the permitted scope, selection stops with an error.
+It does not broaden `target_taxon` to get a seed. The nearest matching rank takes
+precedence over annotation-quality ties at more distant ranks. Exact-name matching
+still does not resolve nomenclatural synonyms automatically, but family metadata
+can provide a same-family seed despite a renamed species or genus.
+
+Automatic candidates must identify a mitochondrial organelle and animal lineage,
+pass the same CDS/rRNA validation used by recovery, and meet the configured genome
+length and any supplied genetic-code filters. Partial/incomplete descriptions are
+excluded. Among matches, complete-genome descriptions, larger annotated CDS/rRNA
+gene sets and circular topology are preferred; accession/path settle equal ties.
+These rules select a usable taxonomic reference, not a proven closest relative
+or independently curated perfect genome. This workflow still uses `animal_mt`.
+
+A blank `mt_code` is inferred only if all eligible references at the selected
+match tier agree on one explicitly annotated CDS translation table. Missing or
+conflicting codes require a sample-sheet override. A manually specified GenBank
+reference can supply a unique code from its CDS annotations as well.
+
+The first scan of a large collection takes time; unchanged records are reused
+from `tortuga_reference_index.sqlite` in that directory. `--reference-index` can
+place this cache elsewhere. New/changed files are re-inspected and removed files
+are pruned. `reference_selection.tsv` records the selected accession, organism,
+match level, actual matched rank/name, code source and path. `resolved_samples.tsv`
+records usable per-sample inputs with all original taxonomy and metadata columns.
+Per-sample summaries and run checkpoints retain the input hierarchy as well.
+Neither report changes the expected target used for the BOLD gate. For example,
+a Pinnotheridae reference may seed recovery for Rathbunixa occidentalis, while
+the BOLD gate still requires Rathbunixa occidentalis, not just Pinnotheridae.
+
+For the user's current Tortuga installation and prepared databases:
+
+```bash
+bash ~/bin/Tortuga/pipeline_controller.sh \
+    --pipeline both \
+    -i ~/NOAA/CA_intertidal/raw_reads \
+    --samples ~/NOAA/CA_intertidal/CA_intertidal_samples.tsv \
+    --genbank-dir ~/NOAA/mitos_genbank \
+    --bold-fasta ~/NOAA/BOLD/prepared_fixed/coi.fasta \
+    --bold-metadata ~/NOAA/BOLD/prepared_fixed/metadata.tsv \
+    --mitos-refdir ~/NOAA/mitos_data \
+    --mitos-refseqver refseq89m \
+    --itsme-db /home/ark/databases/itsme_db \
+    -o ~/NOAA/CA_intertidal/both_results_v204 \
+    -t 32 -m 200
+```
+
+Use `--pipeline mitolooper` to omit ITSME. New controller versions/options require
+a fresh output root; existing older-version checkpoint directories are retained.
+
+The Rhizophysa sample still requires separate linear-genome evaluation; this
+release changes reference selection, not the circularity acceptance criterion.
+
+| Consumer | Use of selected GenBank reference |
+| --- | --- |
+| MitoFinder | Passes the annotated GenBank file directly with `-r`. |
+| NOVOPlasty and read GetOrganelle | Receives a COX1 nucleotide seed extracted by this wrapper. |
+| Assembly GetOrganelle | Receives extracted nucleotide gene labels. |
+| mtGrasp | Receives the extracted mitochondrial nucleotide genome (or a confirmed rescue partial). |
+| Candidate evaluation | Uses extracted CDS proteins and rRNAs for the completeness screen and COX1 localization. |
+| MITOS2 | Uses its separate `refseq89m` release; it does not receive the selected GenBank file. |
+| ITSME and WGS assembly | Do not receive the selected mitochondrial GenBank file. |
+
 Run `pipeline_controller.sh` from `base`; environment switching is automatic.
 The required selector is `--pipeline itsme`, `--pipeline mitolooper`, or
 `--pipeline both`. An input directory can be supplied with `-i` / `--input-dir`

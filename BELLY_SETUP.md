@@ -82,13 +82,20 @@ the sample sheet:
 cp examples/CA_intertidal_samples.tsv samples.tsv
 ```
 
-Fill `target_taxon`, `mt_code`, and `reference_gb` for all twelve samples. The
-optional `seed_fasta` may remain blank: COX1 from the GenBank reference supplies the
-initial seed. Multiple samples can share a suitable reference.
+Fill `target_taxon` for each sample. Leave `reference_gb` blank to select from
+`~/NOAA/mitos_genbank` automatically, or set `--genbank-dir` to another collection.
+Leave `mt_code` blank to infer it when matching GenBank CDS annotations agree on
+one explicit code; fill it when the controller reports missing/conflicting codes.
+The optional `seed_fasta` may remain blank: COX1 from the selected GenBank reference
+supplies the initial seed. Multiple samples can share a suitable reference.
+Retain the full kingdom-to-species hierarchy from source metadata. The default
+selector uses the target, genus, then family; broader supplied ranks can be used
+with `--reference-min-rank order`, `class`, or `phylum`. Selection reports the
+actual matching rank and keeps the expected BOLD target unchanged.
 
 | Resource | Requirement |
 | --- | --- |
-| Mitochondrial GenBank reference | One curated, annotated mitochondrial genome appropriate for each sample, recorded in `samples.tsv`. |
+| Mitochondrial GenBank references | Local annotated collection selected by `target_taxon`, or a per-sample `reference_gb` override. Selection is reported in `reference_selection.tsv`. |
 | GetOrganelle `animal_mt` resources | Its mitochondrial seed/label databases; these may already be installed. |
 | MITOS2 models | An extracted release such as `refseq89m` below `--mitos-refdir`. |
 | BOLD COI FASTA and metadata TSV | Matching sequence IDs, taxonomy and provenance for target validation. |

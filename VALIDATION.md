@@ -1,8 +1,8 @@
-# Validation - 2026-11-07
+# Validation - 2026-11-10
 
-Controller version: 2.0.2.
+Controller version: 2.0.4.
 
-- 32 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 46 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -21,6 +21,16 @@ Controller version: 2.0.2.
   mode, no mitochondrial prerequisites for standalone ITSME, standalone retries and
   caching, failure continuation across samples, selector validation and the shell entry point.
 - Original uploaded scripts are preserved byte-for-byte under `legacy/`.
+- Automatic reference tests cover exact species precedence, reported same-genus
+  fallback, strict matching, named higher lineages, unrelated-taxon rejection,
+  organelle/annotation/partial/length filtering, conflicting and missing codes,
+  deterministic ties, changed/removed-file cache refresh and a taxon-only sample
+  sheet end-to-end through simulated recovery with selection reports.
+- BOLD preparation tests include a 200 KB TSV field exceeding Python's old limit.
+- Hierarchy tests cover normalized source rank columns/species epithets,
+  same-family fallback, closer-genus precedence, explicit order-scope limits,
+  phylum disagreement, family-level code conflicts, complete metadata retention
+  and successful target confirmation when the seed reference is a different genus.
 
 The integration tests use CLI doubles and synthetic references, not the actual
 external assembly programs. No project FASTQs were supplied here, and real

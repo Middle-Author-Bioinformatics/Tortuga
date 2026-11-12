@@ -1,3 +1,37 @@
+# 2.0.4 - 2026-11-10
+
+- Restored the full supplied taxonomy and source identifiers in the twelve-sample
+  CA intertidal sheet. Updated the template to include rank columns.
+- Added default hierarchy selection: target, genus, then supplied family; optional
+  broader fallback stops at the order/class/phylum selected by --reference-min-rank.
+- Require agreement with a supplied phylum. Prefer the closest available named
+  rank before annotation quality, and retain exact/genus-only modes.
+- Record matched rank/name, preserve all input columns in resolved_samples.tsv,
+  and retain normalized input hierarchy in checkpoints and sample summaries.
+- Keep the original target for BOLD identification even when a family-level seed
+  is chosen. Genetic-code ambiguity still requires an explicit override.
+- Added six regression tests for hierarchy ranking, scope limits, phylum mismatch,
+  code conflicts, metadata preservation and family-seeded target confirmation.
+
+# 2.0.3 - 2026-11-09
+
+- Added automatic local GenBank reference selection from target_taxon; explicit
+  reference_gb overrides remain supported. Default collection: ~/NOAA/mitos_genbank.
+- Match exact organism/lineage first, then allow a recorded same-genus fallback;
+  --reference-match exact disables that fallback. No silent cross-genus fallback.
+- Validate animal mitochondrial identity and CDS/rRNA annotations; apply genome
+  length and supplied genetic-code filters before deterministic selection.
+- Infer a blank mt_code only when eligible reference CDS annotations agree on one
+  explicit genetic code. Report choices in reference_selection.tsv and resolved_samples.tsv.
+- Cache unchanged GenBank entries in an incremental SQLite index, including
+  exclusion reasons, to avoid repeatedly parsing the full collection.
+
+# BOLD preparation fix - 2026-11-08
+
+- Raised the TSV parser field limit from Python's default 128 KiB to 2 GiB minus
+  one byte for large BOLD export fields. Added a regression test using a 200 KB
+  field and concise reporting of CSV parsing errors.
+
 # 2.0.2 - 2026-11-07
 
 - Added `pipeline_controller.sh` with `--pipeline itsme`, `mitolooper`, or `both`.

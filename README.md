@@ -1,4 +1,15 @@
-# MitoGenomeScanner 2.0.2
+# MitoGenomeScanner 2.0.4
+
+**Automatic references:** retain the full `kingdom`, `phylum`, `class`, `order`,
+`family`, `genus`, and `species` columns when available. `sample` and `target_taxon`
+are the minimum supported fields. Blank/missing `reference_gb` selects from `~/NOAA/mitos_genbank`
+(override with `--genbank-dir`). A blank `mt_code` is inferred only when matching
+reference annotations agree on one explicit code. See `CONTROLLER.md` for the
+selection rules, reports, and a complete command for the Tortuga installation.
+Default selection tries the target, genus, then supplied family. Broader supplied
+ranks require `--reference-min-rank order`, `class`, or `phylum`. Input taxonomy
+and extra metadata are retained in `resolved_samples.tsv`; recovery seed selection
+never broadens the target identity used for BOLD confirmation.
 
 **Unified controller:** `pipeline_controller.sh --pipeline itsme|mitolooper|both`
 selects standalone ITSME, mitochondrial recovery, or the integrated workflow.
@@ -99,9 +110,10 @@ Fill the tab-separated columns:
 | --- | --- |
 | `sample` | FASTQ stem, e.g. `W30877`. |
 | `target_taxon` | Expected species or other chosen rank, spelled as in BOLD metadata. Confirmation is only at this requested taxon, not automatically at species level. |
-| `mt_code` | Correct NCBI mitochondrial translation table for that organism. Avoid assigning one code to all marine invertebrates without checking. |
-| `reference_gb` | ONE annotated, curated mitochondrial reference genome in GenBank format, preferably from a close relative. Relative paths are resolved against the sheet directory. |
+| `mt_code` | Optional explicit NCBI mitochondrial translation table. Blank values are inferred only when matching reference CDS annotations agree on one explicit code; conflicting/missing codes require this override. |
+| `reference_gb` | Optional path override for ONE annotated mitochondrial genome. Blank/missing selects from `--genbank-dir` using the target taxon. Relative override paths are resolved against the sheet directory. |
 | `seed_fasta` | Optional mitochondrial/COI nucleotide seed. If blank, the controller derives COX1 from `reference_gb`. |
+| `kingdom`, `phylum`, `class`, `order`, `family`, `genus`, `species` | Recommended full input hierarchy. Rank column names may be lower or title case. `species` may contain the epithet or full binomial. Missing ranks remain blank. |
 
 The reference must have uniquely named, complete CDS/rRNA genes, including COX1,
 at least three CDS genes and at least one rRNA. The expected CDS/rRNA gene set is

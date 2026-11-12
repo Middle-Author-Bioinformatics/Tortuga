@@ -76,6 +76,63 @@ def summary(f):
     return json.loads((f["out"]/"W30877/final/summary.json").read_text())
 
 
+def test_automatic_reference_and_code_from_taxon_only_sheet(fixture,tmp_path):
+    catalog=tmp_path/"genbank"
+    catalog.mkdir()
+    source=tmp_path/"reference.gb"
+    record=SeqIO.read(source,"genbank")
+    record.annotations.update(organism="Target species",taxonomy=["Eukaryota","Metazoa","Target"],topology="circular")
+    record.description="Target species mitochondrion, complete genome"
+    for feature in record.features:
+        if feature.type=="CDS":
+            feature.qualifiers["transl_table"]=["5"]
+    SeqIO.write(record,catalog/"selected.gb","genbank")
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],
+                  ["sample","target_taxon"])
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},
+                              ["--genbank-dir",str(catalog)])
+    assert code==0
+    with (fixture["out"]/"reference_selection.tsv").open() as handle:
+        rows=list(csv.DictReader(handle,delimiter="\t"))
+    assert rows[0]["reference_gb"]==str(catalog/"selected.gb")
+    assert rows[0]["code_source"]=="GenBank_CDS"
+    assert rows[0]["match_level"]=="exact_taxon"
+    assert summary(fixture)["target_taxon"]=="Target species"
+    with (fixture["out"]/"resolved_samples.tsv").open() as handle:
+        resolved=list(csv.DictReader(handle,delimiter="\t"))
+    assert resolved[0]["mt_code"]=="5"
+
+
+def test_family_reference_preserves_target_taxonomy_and_extra_metadata(fixture,tmp_path):
+    catalog=tmp_path/"genbank"
+    catalog.mkdir()
+    record=SeqIO.read(tmp_path/"reference.gb","genbank")
+    record.annotations.update(organism="Relative species",
+                              taxonomy=["Eukaryota","Metazoa","Annelida","Targetida","Targetidae","Relative"])
+    record.description="Relative species mitochondrion, complete genome"
+    for feature in record.features:
+        if feature.type=="CDS":
+            feature.qualifiers["transl_table"]=["5"]
+    SeqIO.write(record,catalog/"family.gb","genbank")
+    input_row={"sample":"W30877","target_taxon":"Target species","Genus":"Target",
+               "Species":"species","Family":"Targetidae","Order":"Targetida",
+               "Phylum":"Annelida","AphiaID":"1234","original_identification":"Target (Subgenus) species"}
+    m.write_table(fixture["sheet"],[input_row],list(input_row))
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},
+                              ["--genbank-dir",str(catalog)])
+    assert code==0
+    with (fixture["out"]/"reference_selection.tsv").open() as handle:
+        selected=list(csv.DictReader(handle,delimiter="\t"))[0]
+    assert selected["match_rank"]=="family" and selected["matched_taxon"]=="Targetidae"
+    with (fixture["out"]/"resolved_samples.tsv").open() as handle:
+        resolved=list(csv.DictReader(handle,delimiter="\t"))[0]
+    assert all(resolved[key]==value for key,value in input_row.items())
+    result=summary(fixture)
+    assert result["target_taxon"]=="Target species"
+    assert result["taxonomy"]["family"]=="Targetidae"
+    assert result["best_candidate"]["target_status"]=="confirmed_target"
+
+
 def test_early_stop_keeps_full_branch_and_wgs(fixture):
     code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},
                               ["--branch","full","--itsme-db",str(fixture["itsmedb"])])
@@ -197,6 +254,23 @@ def test_prepare_bold_preserves_provenance_and_excludes_other_markers(tmp_path):
     assert [r.id for r in records]==["PID1_COI5P"]
     metadata=m.load_bold_metadata(out/"metadata.tsv")
     assert metadata["PID1_COI5P"]["source"]=="BOLD test export"
+
+
+def test_prepare_bold_accepts_large_fields(tmp_path):
+    export = tmp_path/"large.tsv"
+    m.write_table(export, [{"processid":"PID1", "marker_code":"COI-5P",
+                           "nuc":"ACGT"*150, "species":"Target species",
+                           "notes":"x"*200_000}],
+                  ["processid","marker_code","nuc","species","notes"])
+    out = tmp_path/"prepared"
+    p = subprocess.run([sys.executable,str(ROOT/"prepare_bold.py"),str(export),
+                        "--source","large field test","-o",str(out)],
+                       capture_output=True,text=True)
+    assert p.returncode == 0, p.stderr
+    records = list(SeqIO.parse(out/"coi.fasta","fasta"))
+    assert len(records) == 1 and str(records[0].seq) == "ACGT"*150
+    metadata = m.load_bold_metadata(out/"metadata.tsv")
+    assert metadata[records[0].id]["taxon"] == "Target species"
 
 
 def test_pair_subsampling_is_reproducible_and_checks_mates(fixture,tmp_path):
