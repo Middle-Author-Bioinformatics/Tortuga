@@ -1,5 +1,140 @@
 # One controller for ITSME, MitoLooper, or both
 
+## Compact outputs by default (2.0.7)
+
+Completed samples now export client deliverables into `OUT/SAMPLE/final/` and
+remove generated stage work files automatically. This includes samples with
+failed mitochondrial recovery/WGS: their actual status and logs are retained.
+Cleanup does not rerun tools, change acceptance criteria or turn failures into
+successful biological recovery.
+
+| Retained location | Contents |
+| --- | --- |
+| `SAMPLE/final/itsme_*.fasta`, `.csv`, `.tsv` | Native ITSME final sequences, master/partial summaries and annotation/support tables, directly alongside mito outputs. |
+| `SAMPLE/final/mitos_*` | Native MITOS2 sequences, GFF/GenBank/BED products when present, plus `mitos_result_features.tsv` generated from the GFF. |
+| `SAMPLE/final/*_assembly_graph*.fastg`, `.gfa` | Final available assembly graphs from ITSME, WGS and recovery tools. |
+| `SAMPLE/final/wgs_contigs.fasta`, `wgs_scaffolds.fasta` | Final WGS sequence products when produced; summary flags still identify a failed/timed-out WGS run. |
+| `SAMPLE/final/outputs_manifest.tsv` | Original source path, retained path, product kind and size. |
+| `SAMPLE/qc/`, `SAMPLE/logs/` | QC summaries/HTML and wrapper/native logs, including failures and timeouts. |
+| `SAMPLE/candidates/`, `candidates.tsv`, `stages.*`, `references/`, `run_config.json` | Small assessment, gene/taxon evidence, provenance and checkpoint reports. Candidate FASTA paths are updated to retained final files. |
+| `SAMPLE/cleanup.json`, `cleanup_removed.tsv` | Cleanup counts, discarded intermediate bytes and removed-file audit. |
+
+Generated GetOrganelle/ITSME recruited FASTQs, trimmed/subsampled FASTQs,
+SAM/BAM mappings, SPAdes K* intermediates, assembly scratch, doubled candidate
+subjects, temporary junction mappings and superseded stage copies are removed.
+The copied BOLD BLAST index is removed only after the cohort finishes; its
+provenance remains. External input reads and shared databases are not deleted.
+Final graphs and contig FASTAs may themselves be large and are intentionally
+retained. Nonempty final sequences/graphs are exported; empty FASTA placeholders
+and intermediate recruitment bait/round FASTAs are omitted.
+
+Exports finish before stage deletion begins. Same-name identical products share
+one retained destination; different products receive distinct names. Native
+logs keep their commands and historical working paths. The cleanup does not
+rewrite native annotation calls. The GFF-derived TSV retains original coordinates,
+feature types, strands and attributes (GFF coordinates are 1-based inclusive).
+
+Use `--keep-intermediates` to retain the full working tree for debugging or
+stage-level retry. Final products are still exported into `final/` in that mode.
+The default compact mode is intended for finished deliverables: matching
+`--resume` calls reuse finalized sample results, including reported failures,
+without rebuilding the BOLD index or rerunning assembly. Removed stage work cannot
+be resumed; retry those analyses in a new output directory. Missing/size-changed
+retained deliverables cause reuse to fail instead of silently reporting success.
+
+### Shrink an existing completed run without rerunning analyses
+
+After updating the Tortuga files, run this on TheBelly for the output directory
+shown in your earlier command:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/compact_outputs.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v205
+```
+
+An optional preview uses the same command with `--dry-run`. Specify the actual
+completed output directory if your run used a different name. This also supports
+older Tortuga output versions; no new pipeline run is needed. The cleanup refuses
+a directory still locked by an active controller or an unrecognized directory.
+For new runs no cleanup flag is needed: compaction is the default.
+
+## Configurable stopping criteria (2.0.6)
+
+The default remains circularity plus all reference CDS/rRNA genes and the
+configured genome length range. To stop sooner, choose the topology and a rule:
+
+| Option | Meaning |
+| --- | --- |
+| `--accept-topology circular` | Require established circularity (default). |
+| `--accept-topology any` | Allow an unclosed/linear contig as well as a circular candidate. This does not prove a biologically linear genome. |
+| `--accept-rule all-genes` | All reference CDS/rRNA genes plus the length threshold (default). |
+| `--accept-rule genes` | At least `--min-detected-genes N` on one contig. |
+| `--accept-rule length` | At least `--min-accepted-bp N` on one contig. |
+| `--accept-rule either` | Meet the gene-count OR length threshold. Supply both thresholds. |
+| `--accept-rule both` | Meet the gene-count AND length threshold. Supply both thresholds. |
+| `--skip-wgs-if-accepted` | Skip WGS if read recovery already yielded a passing candidate. ITSME still runs in combined mode. |
+
+Thresholds are batch-wide. Gene count means unique reference protein-coding
+CDS plus rRNA genes passing the existing identity and query-coverage cutoffs;
+it excludes tRNAs. Counts and lengths are never pooled across contigs or methods.
+Every rule still requires target-confirmed COI/BOLD evidence, successful gene
+screening, zero ambiguous bases and the `--min-candidate-bp` / `--max-genome-bp`
+safety bounds (500 / 30,000 bp by default). Without `--accept-topology any`,
+every rule also requires circularity.
+
+`--min-accepted-bp` defaults to `--min-genome-bp` (10,000 bp). It changes the
+acceptance length threshold independently of reference-database length filtering.
+The `genes` rule uses the gene threshold and common safety bounds; to require
+both a gene count and a minimum length, explicitly select `both`.
+
+Examples of user-chosen thresholds, to append to an existing command:
+
+```bash
+# Accept a circular or unclosed candidate with at least 12 CDS/rRNA genes.
+--accept-topology any --accept-rule genes --min-detected-genes 12
+
+# Accept a circular or unclosed candidate of at least 14,000 bp.
+--accept-topology any --accept-rule length --min-accepted-bp 14000
+
+# Require both thresholds; avoid WGS once a candidate passes.
+--accept-topology any --accept-rule both --min-detected-genes 12 --min-accepted-bp 14000 --skip-wgs-if-accepted
+```
+
+The numbers above illustrate configuration; they are not taxon-specific biological
+recommendations. Larger genomes may need a larger `--max-genome-bp` as well.
+
+A passing candidate stops the remaining mitochondrial recovery methods and
+receives MITOS2 annotation. Separate WGS still runs unless `--no-assembly` or
+`--skip-wgs-if-accepted` applies. If no candidate passes before WGS, that WGS
+stage and assembly-based recovery remain available. Target identity and the
+actual missing-gene/circularity evidence remain in the reports.
+
+Linear/unclosed sequences are screened without duplicating the sequence across
+an artificial end-to-start join. Terminal repeats are preserved unless
+circularity is established. MITOS2 receives `--linear` for unclosed candidates,
+as documented by the MITOS maintainers:
+https://gitlab.com/Bernt/MITOS/-/blob/mitos2/README.md
+This is single-contig linear screening/annotation, not a telomere or terminal
+structure validation workflow, and does not assemble multipartite genomes.
+
+`accepted_candidate.fasta` contains the candidate that met the selected policy.
+Relaxed acceptances use `accepted_by_policy_annotated` or
+`accepted_by_policy_annotation_failed`; missing genes remain missing and
+circularity is never invented. `strict_complete_candidate` and
+`complete_by_reference` report the stricter screens separately. The legacy
+`circular_target_candidate.fasta` is written only when the strict circular,
+all-reference-gene and genome-length checks also pass. Annotation failures
+return a nonzero batch status under every policy.
+
+`acceptance_policy.json`, `candidates.tsv`, per-candidate `assessment.json` and
+sample/cohort summaries record the policy, detected genes, thresholds, failed
+checks and decision reason. Console messages now print the candidate's length,
+gene count, topology, target status and stopping decision.
+
+New analysis settings require a fresh output root: use `both_results_v207`, for example.
+They do not alter an already-running v2.0.5 process. Changed settings/version
+cannot be resumed into old checkpoints. Existing results are retained.
+
 ## Automatic GenBank references (2.0.5)
 
 Only `sample` and `target_taxon` are required in mitochondrial sample sheets.
@@ -73,7 +208,7 @@ bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
     --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
-    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v205 \
+    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v207 \
     -t 32 -m 200
 ```
 
@@ -81,15 +216,17 @@ Use `--pipeline mitolooper` to omit ITSME. New controller versions/options requi
 a fresh output root; existing older-version checkpoint directories are retained.
 
 If a sample has no usable reference, `both` still runs its ITSME stage under
-`OUT/unresolved_references_itsme/SAMPLE/itsme/attempt_NNN/output/`; it skips that
+`OUT/SAMPLE/final/` with `itsme_` prefixes; it skips that
 sample's mitochondrial recovery and WGS. `reference_selection.tsv` records the
 failure and any boundary warnings, and `reference_failures.tsv` lists unresolved
 samples. The cohort and invocation summaries retain `reference_unavailable` and
-ITSME success/failure separately. Resume with `--resume` to reuse completed
-independent ITSME attempts; use a new output root after a version change.
+ITSME success/failure separately. In compact mode `--resume` reuses finalized
+results; use `--keep-intermediates` for stage retries and a new output root after
+a version change.
 
-The Rhizophysa sample still requires separate linear-genome evaluation; this
-release changes reference selection, not the circularity acceptance criterion.
+For a run allowing Rhizophysa/unclosed candidates, use `--accept-topology any`
+and an appropriate rule above. Acceptance does not establish biological linearity
+or full terminal structures.
 
 | Consumer | Use of selected GenBank reference |
 | --- | --- |
@@ -164,8 +301,9 @@ not require a generated configuration file or manual environment activation.
 ## Common controls and outputs
 
 - `--only-sample W30877` runs one sample for a trial.
-- `--resume` reuses completed stages with matching inputs/settings. Failed stages
-  are retried in a new attempt directory; directory existence alone never proves success.
+- `--resume` reuses finalized compact samples with matching inputs/settings. With
+  `--keep-intermediates`, failed stages can be retried in a new attempt directory;
+  directory existence alone never proves success.
 - `--no-assembly` disables the separate WGS and post-WGS mito recovery stages.
   In `both` mode ITSME still runs and does its own targeted assembly.
 - `--itsme-timeout 180` limits each ITSME call to 180 minutes by default.
@@ -175,13 +313,12 @@ When `-o` is omitted, the default directory is `itsme_results`, `mito_results`, 
 `both_results` according to the selector. Use a separate output directory when
 switching modes; checkpoints from another mode/version are not silently reused.
 
-ITSME-only results are at `OUT/SAMPLE/itsme/attempt_NNN/output/`, with the native
-`master_summary.csv`, FASTAs, coverage and other files written there by ITSME.
-The actual path is also recorded in `OUT/cohort_summary.csv` and
-`OUT/SAMPLE/final/summary.json`. Logs and stage checkpoints are alongside them.
-Its standalone batch continues after individual sample failures and returns a
-nonzero status if any sample fails. The mitochondrial/both layouts are described
-in README, with ITSME under `02_itsme/attempt_NNN/output/` in combined runs.
+ITSME-only and combined results are exported directly into `OUT/SAMPLE/final/`
+with `itsme_` prefixes, including native master/partial summaries and FASTAs.
+`itsme_output` in the sample/cohort summaries points there. Logs, manifests and
+cleanup records retain the original working paths for provenance. Standalone
+batches still continue after individual failures and return nonzero on failure.
+With `--keep-intermediates`, the native deep output tree is also retained.
 
 The old `mito_looper.sh` and legacy `--branch mito/full` flags remain available.
 For the new controller, use the single `--pipeline` selector; incompatible legacy

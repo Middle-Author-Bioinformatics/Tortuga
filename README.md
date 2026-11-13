@@ -1,4 +1,17 @@
-# MitoGenomeScanner 2.0.5
+# MitoGenomeScanner 2.0.7
+
+**Compact output is now the default:** final FASTAs, annotations and assembly
+graphs are retained, with ITSME products directly in each sample’s `final/` under
+`itsme_` names. Generated reads, mappings, WGS scratch and copied BOLD indexes
+are removed after use. Use `--keep-intermediates` for stage-level retries/debugging.
+`compact_outputs.sh` can shrink an existing completed run without rerunning tools;
+see `CONTROLLER.md` for the full command and retention details.
+
+**Configurable stopping:** `--accept-topology any` allows linear/unclosed
+candidates. Choose `--accept-rule all-genes|genes|length|either|both` and gene/length
+thresholds; the default stays strict. `--skip-wgs-if-accepted` can avoid WGS after
+successful targeted recovery. See `CONTROLLER.md` for the exact controls, caveats
+and examples.
 
 **Automatic references:** retain the full `kingdom`, `phylum`, `class`, `order`,
 `family`, `genus`, and `species` columns when available. `sample` and `target_taxon`
@@ -39,9 +52,9 @@ There is no GNU parallel dispatch: both samples and methods run sequentially.
 | Stage | Behavior |
 | --- | --- |
 | Read preparation | Paired fastp QC by default; `--no-qc` uses the input reads directly. Mates are retained as pairs; no overlap merging. |
-| 1. Mitochondria from reads | NOVOPlasty, GetOrganelle, MitoFinder, then mtGrasp. Validate each output before trying the next method. Stop remaining read methods after a circular, target-confirmed candidate passes the reference gene screen. Annotate that candidate with MITOS2 immediately. |
+| 1. Mitochondria from reads | NOVOPlasty, GetOrganelle, MitoFinder, then mtGrasp. Validate each output before trying the next method. Stop remaining read methods when a candidate meets the configured policy and target gate; the default requires circularity and all reference genes. Annotate that candidate with MITOS2 immediately. |
 | 2. ITS/rDNA | `--branch full` calls the separately installed ITSME v1.9 shell pipeline on original reads. Default `--branch mito` omits nuclear rDNA. |
-| 3. WGS assembly | metaSPAdes, with `--only-assembler`, a memory setting, wall-clock timeout, and optional percentage of reads. MEGAHIT is an alternative. This stage still runs after successful read recovery unless `--no-assembly` is set. |
+| 3. WGS assembly | metaSPAdes, with `--only-assembler`, a memory setting, wall-clock timeout, and optional percentage of reads. MEGAHIT is an alternative. This stage still runs after successful read recovery unless `--no-assembly` or `--skip-wgs-if-accepted` applies. |
 | 4. Mitochondria from assembly | If stage 1 failed to produce a passing candidate, GetOrganelle processes the metaSPAdes FASTG graph; MitoFinder then processes contigs if needed. New passing candidates go to MITOS2. |
 | Reporting | Per-sample candidate/evidence tables, all method logs and statuses, best contiguous sequence, and a cohort CSV. |
 
@@ -127,11 +140,13 @@ also require an explicit GenBank protein translation. They are reported in
 full-length gene boundaries. Other uncertain coordinate types remain rejected.
 rRNA product labels `s-rRNA`/`l-rRNA`, 12S/16S and small/large subunit labels are
 recognized when `/gene` is absent. This version does not model duplicated genes
-or multipartite/linear mitochondrial genomes.
+or multipartite mitochondrial genomes. Single-contig linear/unclosed candidates
+can be screened and annotated under `--accept-topology any`; this is not validation
+of telomeres or biological terminal structures.
 
 An individual reference rejection no longer aborts the cohort. Other samples
 continue, and `both` runs independent ITSME for unresolved samples in
-`OUT/unresolved_references_itsme/SAMPLE/itsme/attempt_NNN/output/`. Such samples
+`OUT/SAMPLE/final/` with `itsme_` filenames. Such samples
 are reported as `reference_unavailable`, with the reason in
 `reference_failures.tsv`; the command still exits nonzero to flag incomplete work.
 No mitochondrial recovery or WGS is attempted for those unresolved samples.
@@ -247,7 +262,8 @@ fallback stages. `--no-assembly` can be combined with either branch.
 | `--sampling-seed` | 17. Reproducible Bernoulli template sampling; actual percentage may differ slightly. |
 | `--assembler` | `metaspades`; `megahit` is supported as an alternative. |
 | `--skip-method` | Repeat to disable individual recovery tools explicitly. |
-| `--resume` / `--skip-existing` | Reuse successful matching stages; directory existence alone never proves success. |
+| `--resume` / `--skip-existing` | Reuse finalized compact samples; with `--keep-intermediates`, reuse successful matching stages. |
+| `--keep-intermediates` | Preserve full stage work for debugging/retries; default exports essentials and deletes scratch files. |
 | `--only-sample` | Run one sample from the sheet, preserving other saved cohort entries. |
 | `--dry-run` | Show planned command arrays without launching external tools. |
 | `--env-root` | `/home/ark/miniconda3/envs`; select existing environments automatically under this root. |
@@ -265,10 +281,11 @@ global memory limit for every child process. Fastp uses at most 16 threads.
 These controls are starting settings for benchmarking, not optimized parameters.
 
 Successful checkpoints store commands and input fingerprints. Failed tool
-directories are retained and retried in new `attempt_NNN` directories. Changing
+directories can be retained with `--keep-intermediates` and retried in new `attempt_NNN` directories. Changing
 reference content, biological options, input FASTQ stamps, or command configuration
 requires a new output directory. Ordinary `--resume` can be used for an interrupted
-run with unchanged settings. Interrupted stages are rerun, not resumed internally.
+run with unchanged settings. Completed compact samples are reused as a whole;
+removed intermediates cannot be resumed. Retry finalized analyses in a new root. Interrupted stages are rerun, not resumed internally.
 Do not run two controllers into the same output directory: an advisory lock blocks
 concurrent writers. Use separate output directories for independent jobs.
 
@@ -290,8 +307,11 @@ compete against the full candidate to reduce internal-repeat artifacts.
 
 The reference gene screen requires every expected CDS and rRNA to have >=80%
 single-HSP query coverage, at >=30% amino-acid identity / >=70% rRNA nucleotide
-identity. Screening a doubled candidate handles genes across the circular origin.
-Candidates also need 10-30 kb length by default and zero ambiguous bases. All these
+identity. Established circular candidates are doubled to handle origin-spanning
+genes. Unclosed candidates are screened once with their sequence ends preserved.
+The default requires all reference genes and 10-30 kb length; optional gene-count,
+length, OR and AND rules are described in `CONTROLLER.md`. Every policy still
+requires target confirmation and zero ambiguous bases. All these
 thresholds are adjustable. This is evidence for reference gene recovery, not a
 proof of full tRNA content, intact reading frames, or perfect assembly. MITOS2
 annotation is retained for gene-boundary/tRNA review; its success is separate from
@@ -318,6 +338,8 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `environment_selection.tsv`, `.json` | Selected stage environments and other matching installations; generated automatically when no explicit config is supplied. |
 | `cohort_gene_recovery.csv` | Per-gene reference coverage and identity for each sample's selected candidate. |
 | `SAMPLE/final/best_sequence.fasta` | Best single contiguous candidate, potentially partial or unresolved; always read its summary. |
+| `acceptance_policy.json` | Active stopping rule, topology, length thresholds and gene-count definition. |
+| `SAMPLE/final/accepted_candidate.fasta` | Candidate that met the selected stopping policy; may be incomplete or unclosed under relaxed settings. |
 | `SAMPLE/final/circular_target_candidate.fasta` | Written only for candidates passing circularity, reference gene recovery and COI target checks. |
 | `SAMPLE/final/summary.json` | Selection, evidence, statuses and caveats. |
 | `SAMPLE/final/annotation_summary.json` | MITOS2 GFF feature counts and reported gene labels. |
@@ -328,17 +350,22 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `SAMPLE/candidates/*/assessment.json` | Per-candidate reference-gene, ambiguity and circularity evidence. |
 | `SAMPLE/stages.tsv`, `stages.json` | Every attempted, cached, skipped, failed or timed-out stage. |
 | `SAMPLE/logs/` | Exact commands and native program output. |
-| `SAMPLE/03_wgs/attempt_*/sampling.json` | Requested and actual assembly subset sizes, if sampling was enabled. |
-| `SAMPLE/05_mitos2/attempt_*/output/` | MITOS2 annotation files; exact path also in summary JSON. |
-| `SAMPLE/02_itsme/attempt_*/output/` | Separate ITSME results in full mode. |
+| `SAMPLE/final/wgs_sampling.json` | Requested and actual assembly subset sizes, if sampling was enabled. |
+| `SAMPLE/final/mitos_*` | MITOS2 final annotation/sequence files and a GFF-derived feature TSV. |
+| `SAMPLE/final/itsme_*` | ITSME final FASTAs, tables and graphs, in standalone or combined mode. |
+| `SAMPLE/final/outputs_manifest.tsv` | Retained output inventory and original source paths. |
+| `SAMPLE/cleanup.json`, `cleanup_removed.tsv` | Compaction statistics and removed intermediate paths. |
 
 `recovered_annotated` means the defined recovery gates passed and a nonempty MITOS2
 GFF was produced. `recovered_annotation_failed` means recovery passed but annotation
-failed. Other statuses include `partial_target_confirmed`, `unresolved_candidate`,
+failed. Relaxed-policy winners use `accepted_by_policy_annotated` or
+`accepted_by_policy_annotation_failed`; those names do not claim complete or
+circular mitogenomes. Other statuses include `partial_target_confirmed`, `unresolved_candidate`,
 `no_candidate` and `failed`. A failed requested WGS/ITS stage or annotation produces
 a nonzero batch exit status while subsequent samples continue. Recovery-method
 failures followed by successful fallback remain visible without invalidating that
-successful recovery. Without a recovery winner, method/validation failures produce
+successful recovery. Compaction preserves these statuses and logs even when
+failed-stage scratch is removed. Without a recovery winner, method/validation failures produce
 a nonzero exit status. Biological non-recovery with successfully executed tools
 is distinguished from tool execution failure.
 

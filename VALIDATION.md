@@ -1,8 +1,8 @@
 # Validation - 2026-11-12
 
-Controller version: 2.0.5.
+Controller version: 2.0.7.
 
-- 53 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 91 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -40,6 +40,26 @@ Controller version: 2.0.5.
 - Cohort tests verify continued recovery after reference failure, independent
   ITSME in combined mode, honest failure reporting, no BOLD index when no references
   are usable and unchanged independent-ITSME resume caching.
+
+- Policy tests cover default strict acceptance, linear all-gene recovery, gene
+  thresholds, exact length boundaries, OR/AND truth tables, per-contig unique
+  counts, non-target/conflicting-target rejection, ambiguous bases, length bounds,
+  failed validation, invalid options and annotation failures under relaxed rules.
+- Integration cases verify early stopping in read and post-WGS recovery,
+  optional WGS skipping with exactly one independent ITSME call, strict versus
+  relaxed output labels/files, MITOS2 linear mode, unclosed end preservation
+  and single versus doubled homology subjects.
+
+- Compaction tests cover export of native ITSME products, final graphs, WGS
+  contigs and MITOS annotations; deletion of generated reads/mappings/K* scratch
+  and copied BOLD indexes; preservation of QC, failure logs, provenance and inputs;
+  dry-run nonmutation, repeat cleanup, conflicting filenames, missing retained
+  outputs, active locks, linked metadata and external symlink protection.
+- Combined and standalone integrations verify default compaction, native ITSME
+  results at parent final, failed-stage status retention, and resume without new
+  tool calls or a rebuilt BOLD database. Older reference-unavailable batches are
+  migrated into the same parent final layout without changing biological status.
+- GFF-to-TSV tests retain original coordinates, strand/type and decoded names.
 
 The integration tests use CLI doubles and synthetic references, not the actual
 external assembly programs. No project FASTQs were supplied here, and real

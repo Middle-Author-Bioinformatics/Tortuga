@@ -28,6 +28,8 @@ elif tool == "fastp":
     import shutil
     shutil.copyfile(val("-i"),val("-o"))
     shutil.copyfile(val("-I"),val("-O"))
+    put(val("--json"),'{"mock_qc":"passed"}')
+    put(val("--html"),"<html>Mock QC passed</html>")
 elif tool in {"novoplasty","getorganelle","getorganelle_assembly","mitofinder","mtgrasp"}:
     key = tool
     if tool == "mitofinder" and "-a" in args:
@@ -57,7 +59,7 @@ elif tool in {"tblastn","blastn"}:
     key = next((x for x in sorted(scenario.get("methods",{}),key=len,reverse=True) if ("_"+x+"_") in str(output)), None)
     state=scenario.get("methods",{}).get(key,{})
     if tool == "tblastn":
-        genes = ["cox1","nad1","cytb"] if state.get("complete") else ["cox1"]
+        genes = state.get("genes",["cox1","nad1","cytb"] if state.get("complete") else ["cox1"])
         rows=[]
         for i,g in enumerate(genes):
             rows.append(f"{g}\tcandidate\t90\t200\t200\t12000\t1\t200\t{1+i*1000}\t{600+i*1000}\t1e-80\t500")
@@ -67,14 +69,18 @@ elif tool in {"tblastn","blastn"}:
         hits = ["barcode1"] if target=="yes" else ["barcode2"] if target=="no" else ["barcode1","barcode2"]
         put(output,"\n".join(f"COI\t{x}\t99\t600\t600\t650\t1\t600\t1\t600\t1e-100\t1000" for x in hits)+"\n")
     else:
-        put(output,"rrns\tcandidate\t90\t1000\t1000\t24000\t1\t1000\t8000\t8999\t1e-80\t500\n" if state.get("complete") else "")
+        put(output,"rrns\tcandidate\t90\t1000\t1000\t24000\t1\t1000\t8000\t8999\t1e-80\t500\n" if state.get("rrna",state.get("complete")) else "")
 elif tool in {"metaspades","megahit"}:
     folder=Path(val("-o"))
     put(folder/("contigs.fasta" if tool=="metaspades" else "final.contigs.fa"),">wgs\nACGT\n")
     if tool == "metaspades":
         put(folder/"assembly_graph.fastg",">NODE_1;\nACGT\n")
+    put(folder/"K55/large_scratch.bin","discard me"*100)
 elif tool == "itsme":
     put(Path(val("-o"))/"run_summary.txt","mock ITS complete\n")
+    put(Path(val("-o"))/"final/complete_ITS.fasta",">ITS\nACGTACGT\n")
+    put(Path(val("-o"))/"master_summary.csv","locus,status\nITS,complete\n")
+    put(Path(val("-o"))/"final/accepted_R1.fastq.gz","discard recruited reads")
 elif tool == "mitos2":
     put(Path(val("-o"))/"result.gff","##gff-version 3\ncandidate\tMITOS2\tgene\t1\t600\t.\t+\t.\tName=cox1\n")
 elif tool == "minimap2":

@@ -62,7 +62,7 @@ def fixture(tmp_path):
     config.write_text(json.dumps({"commands":commands}))
     out=tmp_path/"results"
     argv=[str(reads),"--samples",str(sheet),"--bold-fasta",str(bold),"--bold-metadata",str(meta),
-          "--mitos-refdir",str(refdir),"--mitos-refseqver","release","--config",str(config),"-o",str(out)]
+          "--mitos-refdir",str(refdir),"--mitos-refseqver","release","--config",str(config),"-o",str(out),"--keep-intermediates"]
 
     def run(methods,extra=(),fail=()):
         scenario.write_text(json.dumps({"trace":str(trace),"sequence":str(seqpath),"methods":methods,"fail":list(fail)}))
@@ -362,7 +362,7 @@ def itsme_argv(fixture):
     argv=fixture["argv"]
     config=argv[argv.index("--config")+1]
     argv[:]=["--pipeline","itsme","-i",str(fixture["reads"]),"--itsme-db",str(fixture["itsmedb"]),
-             "--config",config,"-o",str(fixture["out"])]
+             "--config",config,"-o",str(fixture["out"]),"--keep-intermediates"]
 
 
 def test_controller_itsme_only_needs_no_mito_references_or_sample_sheet(fixture):
@@ -464,8 +464,8 @@ def test_reference_failure_does_not_block_other_samples_or_independent_itsme(fix
     assert sum(event["tool"]=="itsme" for event in events)==(2 if combined else 0)
     if combined:
         assert unavailable["itsme_ok"] is True
-        assert Path(unavailable["itsme_output"]).joinpath("run_summary.txt").exists()
-        assert "unresolved_references_itsme" in unavailable["itsme_output"]
+        assert Path(unavailable["itsme_output"]).joinpath("itsme_run_summary.txt").exists()
+        assert unavailable["itsme_output"]==str(fixture["out"]/"NOREF/final")
     assert not (fixture["out"]/"NOREF/01_read_recovery").exists()
 
 
@@ -481,3 +481,221 @@ def test_no_usable_references_still_runs_itsme_without_building_bold(fixture,tmp
     assert result["status"]=="reference_unavailable" and result["itsme_ok"] is True
     code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--resume"])
     assert code==1 and len(events)==1
+
+
+def test_linear_all_gene_candidate_stops_and_annotates_with_linear_mode(fixture):
+    code,events=fixture["run"]({"novoplasty":{"complete":True}},
+                              ["--accept-topology","any","--no-assembly"])
+    assert code==0
+    tools=[e["tool"] for e in events]
+    assert "getorganelle" not in tools and "mtgrasp" not in tools
+    annotation=next(e for e in events if e["tool"]=="mitos2")
+    assert "--linear" in annotation["args"]
+    result=summary(fixture)
+    assert result["status"]=="accepted_by_policy_annotated"
+    assert result["accepted_by_policy"] and not result["strict_complete_candidate"]
+    assert result["complete_by_reference"] and not result["circular"]
+    assert result["best_candidate"]["homology_sequence_mode"]=="linear"
+    final=fixture["out"]/"W30877/final"
+    assert (final/"accepted_candidate.fasta").exists()
+    assert not (final/"circular_target_candidate.fasta").exists()
+    candidate_dir=fixture["out"]/"W30877/candidates"/result["best_candidate"]["candidate_id"]
+    assert len(SeqIO.read(candidate_dir/"screen.fasta","fasta").seq)==12000
+
+
+def test_gene_threshold_stops_on_partial_and_skips_wgs_without_skipping_itsme(fixture):
+    code,events=fixture["run"]({"novoplasty":{"genes":["cox1","nad1"]}},
+        ["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),
+         "--accept-topology","any","--accept-rule","genes","--min-detected-genes","2",
+         "--skip-wgs-if-accepted"])
+    assert code==0
+    tools=[e["tool"] for e in events]
+    assert tools.count("itsme")==1 and "metaspades" not in tools
+    assert not any(tool in tools for tool in ["getorganelle","mitofinder","mtgrasp"])
+    result=summary(fixture)
+    assert result["status"]=="accepted_by_policy_annotated"
+    assert result["genes_recovered"]==2 and result["genes_expected"]==4
+    assert not result["complete_by_reference"] and result["itsme_ok"]
+    assert result["wgs_ok"] is None
+    assert result["best_candidate"]["missing_genes"]==["cytb"]
+    assert result["best_candidate"]["missing_rrnas"]==["rrns"]
+    with (fixture["out"]/"cohort_summary.csv").open() as handle:
+        cohort=list(csv.DictReader(handle))[0]
+    assert cohort["accepted_by_policy"]=="True" and cohort["strict_complete_candidate"]=="False"
+
+
+def test_insufficient_genes_continues_to_later_method(fixture):
+    code,events=fixture["run"]({"novoplasty":{"genes":["cox1"]},
+                              "getorganelle":{"genes":["cox1","nad1"]}},
+        ["--accept-topology","any","--accept-rule","genes","--min-detected-genes","2","--no-assembly"])
+    assert code==0 and summary(fixture)["winning_method"]=="getorganelle"
+    assert "mtgrasp" not in [e["tool"] for e in events]
+    assessments=sorted((fixture["out"]/"W30877/candidates").glob("*/assessment.json"))
+    first=json.loads(assessments[0].read_text())
+    assert not first["accepted"] and first["acceptance_failures"]==["selected_rule"]
+
+
+@pytest.mark.parametrize("rule,min_genes,min_bp,accepted",[
+    ("length",None,12000,True),
+    ("length",None,12001,False),
+    ("either",2,12000,True),
+    ("either",1,12001,True),
+    ("either",2,12001,False),
+    ("both",1,12000,True),
+    ("both",2,12000,False),
+    ("both",1,12001,False),
+])
+def test_length_and_combined_rules_use_one_contig(fixture,rule,min_genes,min_bp,accepted):
+    extra=["--accept-topology","any","--accept-rule",rule,"--min-accepted-bp",str(min_bp),"--no-assembly"]
+    if min_genes is not None:
+        extra += ["--min-detected-genes",str(min_genes)]
+    code,events=fixture["run"]({"novoplasty":{"genes":["cox1"]}},extra)
+    result=summary(fixture)
+    assert code==0 and result["accepted_by_policy"] is accepted
+    assert ("mitos2" in [e["tool"] for e in events]) is accepted
+    assert result["best_candidate"]["length_threshold_met"] is (12000>=min_bp)
+    assert not result["complete_by_reference"]
+
+
+def test_gene_count_does_not_sum_fragments_from_different_assemblers(fixture):
+    code,events=fixture["run"]({"novoplasty":{"genes":["cox1","nad1"]},
+                              "getorganelle":{"genes":["cox1","cytb"]}},
+        ["--accept-topology","any","--accept-rule","genes","--min-detected-genes","3","--no-assembly"])
+    assert code==0 and not summary(fixture)["accepted_by_policy"]
+    assert summary(fixture)["genes_recovered"]==2
+
+
+@pytest.mark.parametrize("target",["no","mixed"])
+def test_relaxed_length_policy_still_rejects_non_target_and_conflicting_bold(fixture,target):
+    code,events=fixture["run"]({"novoplasty":{"complete":True,"target":target}},
+        ["--accept-topology","any","--accept-rule","length","--min-accepted-bp","10000","--no-assembly"])
+    result=summary(fixture)
+    assert code==0 and not result["accepted_by_policy"]
+    assert "target_confirmed" in result["best_candidate"]["acceptance_failures"]
+    assert "mitos2" not in [e["tool"] for e in events]
+
+
+def test_relaxed_policy_does_not_override_topology_requirement(fixture):
+    code,events=fixture["run"]({"novoplasty":{"complete":True}},
+        ["--accept-rule","length","--min-accepted-bp","10000","--no-assembly"])
+    result=summary(fixture)
+    assert code==0 and not result["accepted_by_policy"]
+    assert result["best_candidate"]["acceptance_failures"]==["topology"]
+
+
+def test_annotation_failure_under_relaxed_policy_returns_nonzero(fixture):
+    code,events=fixture["run"]({"novoplasty":{"genes":["cox1"]}},
+        ["--accept-topology","any","--accept-rule","length","--no-assembly"],fail=["mitos2"])
+    assert code==1 and summary(fixture)["status"]=="accepted_by_policy_annotation_failed"
+
+
+def test_linear_terminal_repeat_is_preserved_without_junction_support(fixture):
+    code,events=fixture["run"]({"novoplasty":{"complete":True,"overlap":True}},
+        ["--accept-topology","any","--no-assembly"],fail=["minimap2"])
+    result=summary(fixture)
+    assert code==0 and result["accepted_by_policy"] and not result["circular"]
+    candidate=result["best_candidate"]
+    assert candidate["terminal_overlap_bp"]==150 and candidate["terminal_overlap_removed_bp"]==0
+    sequence=SeqIO.read(candidate["fasta"],"fasta").seq
+    screen=SeqIO.read(fixture["out"]/"W30877/candidates"/candidate["candidate_id"]/"screen.fasta","fasta").seq
+    assert len(sequence)==12150 and sequence==screen
+
+
+def test_strict_circular_candidate_uses_doubled_screen_and_circular_annotation(fixture):
+    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},["--no-assembly"])
+    result=summary(fixture)
+    assert code==0 and result["status"]=="recovered_annotated"
+    assert result["strict_complete_candidate"]
+    annotation=next(e for e in events if e["tool"]=="mitos2")
+    assert "--linear" not in annotation["args"]
+    candidate_dir=fixture["out"]/"W30877/candidates"/result["best_candidate"]["candidate_id"]
+    assert len(SeqIO.read(candidate_dir/"screen.fasta","fasta").seq)==24000
+    assert (fixture["out"]/"W30877/final/circular_target_candidate.fasta").exists()
+
+
+def test_acceptance_options_validate_before_launching_tools(fixture):
+    for options in [
+        ["--accept-rule","genes"],
+        ["--accept-rule","both","--min-detected-genes","0"],
+        ["--accept-rule","length","--min-detected-genes","3"],
+        ["--accept-rule","genes","--min-detected-genes","2","--min-accepted-bp","10000"],
+        ["--min-accepted-bp","400"],
+        ["--min-accepted-bp","31000"],
+    ]:
+        with pytest.raises(ValueError):
+            fixture["run"]({},options)
+    assert not fixture["trace"].exists()
+
+
+def test_policy_safety_guards_and_unique_gene_counts():
+    args=m.parser().parse_args(["--accept-topology","any","--accept-rule","genes","--min-detected-genes","2"])
+    base={"length_bp":12000,"ambiguous_bp":0,"circular":False,"complete_by_reference":False,
+          "target_status":"confirmed_target","genes_found":["cox1","cox1"],"rrnas_found":[]}
+    assert not m.apply_acceptance(dict(base),args)["accepted"]
+    base["rrnas_found"]=["rrns"]
+    assert m.apply_acceptance(dict(base),args)["accepted"]
+    for override in [{"ambiguous_bp":1},{"length_bp":31000},{"validation_error":"failed"},
+                     {"target_status":"unresolved"},{"length_bp":499}]:
+        assert not m.apply_acceptance({**base,**override},args)["accepted"]
+
+
+def test_relaxed_policy_also_stops_post_wgs_fallback(fixture):
+    code,events=fixture["run"]({"getorganelle_assembly":{"genes":["cox1"]}},
+        ["--accept-topology","any","--accept-rule","length","--skip-wgs-if-accepted"])
+    assert code==0 and summary(fixture)["winning_method"]=="getorganelle_assembly"
+    assert summary(fixture)["status"]=="accepted_by_policy_annotated"
+    assert "mitofinder" in [e["tool"] for e in events]  # Read-based attempt still ran.
+    assert not any(e["tool"]=="mitofinder" and "-a" in e["args"] for e in events)
+
+
+def test_default_compaction_preserves_deliverables_and_resumes_without_reassembly(fixture):
+    fixture["argv"].remove("--keep-intermediates")
+    raw_before={p:p.read_bytes() for p in fixture["reads"].iterdir()}
+    methods={"novoplasty":{"circular":True,"complete":True}}
+    code,events=fixture["run"](methods,["--pipeline","both","--itsme-db",str(fixture["itsmedb"])])
+    assert code==0
+    root=fixture["out"]/"W30877"
+    final=root/"final"
+    assert (final/"itsme_complete_ITS.fasta").exists()
+    assert (final/"itsme_master_summary.csv").exists()
+    assert (final/"itsme_run_summary.txt").exists()
+    assert (final/"mitos_result.gff").exists()
+    assert (final/"wgs_assembly_graph.fastg").exists()
+    assert (final/"wgs_contigs.fasta").exists()
+    assert not (root/"03_wgs").exists() and not (root/"02_itsme").exists()
+    assert not list(root.rglob("*.fq.gz")) and not list(root.rglob("*.fastq.gz"))
+    assert not (fixture["out"]/"bold_reference/coi.nsq").exists()
+    assert (root/"qc/fastp.html").exists()
+    result=summary(fixture)
+    assert result["itsme_output"]==str(final) and Path(result["best_candidate"]["fasta"]).exists()
+    assert result["annotation_dir"]==str(final)
+    assert {p:p.read_bytes() for p in fixture["reads"].iterdir()}==raw_before
+    before=len(events)
+    code,events=fixture["run"](methods,["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--resume"])
+    assert code==0 and len(events)==before
+
+
+def test_default_compaction_applies_to_standalone_itsme_and_caches_final_results(fixture):
+    itsme_argv(fixture)
+    fixture["argv"].remove("--keep-intermediates")
+    code,events=fixture["run"]({})
+    assert code==0
+    root=fixture["out"]/"W30877"
+    assert (root/"final/itsme_complete_ITS.fasta").exists()
+    assert not (root/"itsme").exists()
+    code,events=fixture["run"]({},["--resume"])
+    assert code==0 and len(events)==1
+
+
+def test_default_compaction_preserves_failed_stage_status_logs_and_final_itsme(fixture):
+    fixture["argv"].remove("--keep-intermediates")
+    code,events=fixture["run"]({"novoplasty":{"complete":True}},
+        ["--pipeline","both","--itsme-db",str(fixture["itsmedb"])],fail=["metaspades","mtgrasp"])
+    assert code==1
+    result=summary(fixture)
+    assert result["wgs_ok"] is False and result["itsme_ok"] is True
+    assert "wgs" in result["failed_stages"] and "mtgrasp" in result["failed_stages"]
+    root=fixture["out"]/"W30877"
+    assert (root/"logs/wgs.log").exists() and (root/"logs/mtgrasp.log").exists()
+    assert (root/"final/itsme_complete_ITS.fasta").exists()
+    assert not (root/"03_wgs").exists()

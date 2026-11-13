@@ -1,3 +1,44 @@
+# 2.0.7 - 2026-11-12
+
+- Compact results by default after each completed sample. Export ITSME final
+  FASTAs, tables and graphs directly into the sample final directory with itsme_
+  prefixes, alongside mitochondrial products. Export final WGS products and
+  native MITOS2 annotations; add a GFF-derived feature TSV.
+- Delete generated recruited/QC/subsampled reads, mapping files, assembler K*
+  scratch, temporary candidate subjects and duplicated stage trees after exports
+  complete. Remove the copied BOLD index after the cohort finishes, retaining
+  provenance, QC summaries, native/wrapper logs and assessment evidence.
+- Preserve input files/shared databases; avoid traversing symlinks, refuse active
+  run cleanup, preserve conflicting products and retain failed/timed-out status.
+- Add compact_outputs.sh for existing completed runs and --keep-intermediates for
+  debugging/retries. Compact --resume reuses verified finalized outputs without
+  rebuilding BOLD or rerunning tools; removed stage work requires a fresh run.
+- Record retained-file mappings and cleanup audits. Keep annotation/candidate
+  pointers current and expose reference-unavailable ITSME products in parent final.
+- Add regression coverage for cleanup/export behavior, existing-run migration,
+  input/link/lock protection, export failure, collisions, annotation TSVs and
+  compact resume in combined and standalone modes.
+
+# 2.0.6 - 2026-11-12
+
+- Add configurable stopping policies: circularity required or optional; all
+  reference genes, a minimum detected gene count, a minimum contig length,
+  either threshold or both. Default acceptance remains strict.
+- Count unique qualifying CDS+rRNA genes per contig, without pooling across
+  methods; keep target confirmation, ambiguity and length safety gates.
+- Record acceptance policy/checks/reasons in console, candidate and cohort
+  reports. Label relaxed winners accepted_by_policy separately from strict
+  recovery, and retain missing-gene and circularity evidence.
+- Export accepted_candidate.fasta for policy winners. Preserve the legacy strict
+  circular export only when its original criteria pass. Annotate unclosed
+  candidates with MITOS2 --linear; report annotation failures as nonzero.
+- Establish topology before homology screening. Screen unclosed contigs once
+  with ends preserved, and double/trim terminal overlap only for established
+  circular candidates. Keep raw-read junction evidence in the reports.
+- Add --skip-wgs-if-accepted while preserving independent ITSME in combined mode.
+- Add 21 regression cases covering thresholds, logic, linear treatment, target
+  rejection, single-contig counts, fallback stopping, annotation and safety checks.
+
 # 2.0.5 - 2026-11-12
 
 - Distinguish uncertain annotation boundaries from ambiguous nucleotide bases.
