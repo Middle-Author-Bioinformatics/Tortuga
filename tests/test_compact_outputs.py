@@ -157,6 +157,7 @@ def test_protected_inputs_inside_stage_and_unknown_directories_are_untouched(com
     config=c.read_json(sample/"run_config.json")
     config["reads"].append({"path":str(protected)})
     c.atomic_json(sample/"run_config.json",config)
+    c.atomic_json(sample/"final/summary.json",c.read_json(sample/"final/summary.json"))
     unknown=put(sample/"user_data/keep.fastq.gz","unmanaged")
     c.compact_run(root)
     assert protected.read_text()=="original in stage" and unknown.read_text()=="unmanaged"
@@ -180,7 +181,7 @@ def test_missing_retained_file_is_detected_before_reusing_compacted_results(comp
 
 def test_unrecognized_directory_is_rejected_without_changes(tmp_path):
     valuable=put(tmp_path/"not_a_pipeline/reads.fq.gz","original")
-    with pytest.raises(ValueError,match="Not a completed"):
+    with pytest.raises(ValueError,match="Not a recognized"):
         c.compact_run(valuable.parent)
     assert valuable.read_text()=="original"
 
@@ -238,3 +239,83 @@ def test_internal_final_product_symlink_is_materialized_before_stage_deletion(co
     assert exported.read_text()==">linked_locus\nTTTT\n" and not exported.is_symlink()
     assert not target.exists()
     c.validate_retained(sample)
+
+
+def test_missing_batch_record_cleans_only_finished_samples_and_retains_shared_index(completed,capsys):
+    root,sample,raw=completed
+    (root/"last_invocation.json").unlink()
+    pending=root/"PENDING"
+    c.atomic_json(pending/"run_config.json",{"sample":"PENDING","reads":[]})
+    pending_reads=put(pending/"012_getorganelle/attempt_001/reads.fq.gz","unfinished work")
+    pending_scratch=put(pending/"03_wgs/attempt_001/output/large.bin","unfinished scratch")
+    reports=c.compact_run(root)
+    assert len(reports)==1 and (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert not (sample/"qc/R1.fq.gz").exists()
+    assert pending_reads.read_text()=="unfinished work" and pending_scratch.read_text()=="unfinished scratch"
+    assert (root/"bold_reference/coi.00.nsq").exists()
+    assert not (root/"last_invocation.json").exists()
+    report=c.read_json(root/"cleanup_summary.json")
+    assert report["unfinished_samples"]==["PENDING"] and report["shared_bold_index_retained"]
+    assert "SKIPPED PENDING" in capsys.readouterr().out
+
+
+def test_active_controller_is_rejected_even_without_batch_record(completed):
+    root,sample,raw=completed
+    (root/"last_invocation.json").unlink()
+    with (root/".pipeline.lock").open("w") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        with pytest.raises(ValueError,match="still running"):
+            c.compact_run(root)
+    assert (sample/"qc/R1.fq.gz").exists()
+    assert not (sample/"final/itsme_complete_ITS.fasta").exists()
+
+
+def test_stale_terminal_summary_does_not_clean_an_interrupted_retry(completed):
+    import os
+    root,sample,raw=completed
+    marker=sample/"run_config.json"
+    old=(sample/"final/summary.json").stat().st_mtime_ns
+    os.utime(marker,ns=(old+1_000_000,old+1_000_000))
+    reports=c.compact_run(root)
+    assert reports==[]
+    assert (sample/"qc/R1.fq.gz").exists()
+    assert (root/"bold_reference/coi.00.nsq").exists()
+
+
+def test_planned_samples_are_not_treated_as_completed(completed):
+    root,sample,raw=completed
+    summary=c.read_json(sample/"final/summary.json")
+    summary["status"]="planned"
+    c.atomic_json(sample/"final/summary.json",summary)
+    assert c.compact_run(root)==[]
+    assert (sample/"qc/R1.fq.gz").exists()
+    assert (root/"bold_reference/coi.00.nsq").exists()
+
+
+def test_unstarted_samples_prevent_shared_index_removal(completed):
+    root,sample,raw=completed
+    put(root/"resolved_samples.tsv","sample\ttarget_taxon\nSAMPLE\tTarget\nNOT_STARTED\tOther\n")
+    c.compact_run(root)
+    assert (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert (root/"bold_reference/coi.00.nsq").exists()
+    assert c.read_json(root/"cleanup_summary.json")["not_started_samples"]==["NOT_STARTED"]
+
+
+def test_missing_batch_record_can_promote_finished_independent_itsme(completed):
+    root,sample,raw=completed
+    (root/"last_invocation.json").unlink()
+    fallback=root/"unresolved_references_itsme"
+    child=fallback/"NOREF"
+    c.atomic_json(child/"run_config.json",{"sample":"NOREF","reads":[]})
+    c.atomic_json(child/"final/summary.json",{"sample":"NOREF","status":"completed","itsme_ok":True})
+    put(child/"itsme/attempt_001/output/final/complete_ITS.fasta",">ITS\nACGT\n")
+    c.compact_run(root)
+    assert (root/"NOREF/final/itsme_complete_ITS.fasta").exists()
+    assert c.read_json(root/"NOREF/final/summary.json")["status"]=="reference_unavailable"
+    assert (root/"bold_reference/coi.00.nsq").exists()
+    assert not (root/"last_invocation.json").exists()
+
+
+def test_missing_directory_has_specific_error(tmp_path):
+    with pytest.raises(ValueError,match="does not exist"):
+        c.compact_run(tmp_path/"missing")

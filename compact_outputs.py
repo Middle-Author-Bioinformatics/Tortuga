@@ -394,46 +394,99 @@ def refresh_cohort(root):
         atomic_json(path,invocation)
 
 
+def finished_sample(sample):
+    """A fresh terminal sample report, not merely an existing final directory."""
+    config=sample/"run_config.json"
+    summary=sample/"final/summary.json"
+    if not summary.is_file() or summary.is_symlink():
+        return False
+    result=read_json(summary)
+    if result.get("status") not in {"completed","failed","recovered_annotated","recovered_annotation_failed",
+            "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","partial_target_confirmed",
+            "unresolved_candidate","no_candidate","reference_unavailable"}:
+        return False
+    # A newer checkpoint can indicate an interrupted retry with a stale old summary.
+    return summary.stat().st_mtime_ns>=config.stat().st_mtime_ns
+
+
+def sample_directories(root):
+    return sorted(path for path in root.iterdir() if path.is_dir() and not path.is_symlink()
+                  and (path/"run_config.json").is_file() and not (path/"run_config.json").is_symlink())
+
+
 def compact_run(root,dry_run=False):
-    """One explicitly requested finished cohort; fail if the controller still holds its lock."""
+    """Clean finished samples in one inactive cohort, preserving unfinished work."""
     root=Path(root).expanduser().absolute()
-    if root.is_symlink() or not root.is_dir() or not (root/"last_invocation.json").is_file():
-        raise ValueError(f"Not a completed Tortuga run directory: {root}")
+    if not root.exists():
+        raise ValueError(f"Output directory does not exist: {root}")
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"Not a regular Tortuga output directory: {root}")
+    marker=root/"last_invocation.json"
+    fallback=root/"unresolved_references_itsme"
+    children=sample_directories(root)
+    fallback_children=sample_directories(fallback) if fallback.is_dir() and not fallback.is_symlink() else []
+    if not marker.is_file() and not children and not fallback_children:
+        raise ValueError(f"Not a recognized Tortuga output directory: {root}")
     reports=[]
     with (root/".pipeline.lock").open("a") as lock:
         try:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError("The pipeline is still running in this directory; cleanup waits until it finishes")
-        for sample in sorted(root.iterdir()):
-            if sample.is_dir() and not sample.is_symlink() and (sample/"run_config.json").is_file() and (sample/"final/summary.json").is_file():
-                reports.append(compact_sample(sample,dry_run=dry_run))
-        fallback=root/"unresolved_references_itsme"
-        if (fallback/"last_invocation.json").exists():
+            raise ValueError("The pipeline is still running in this directory; nothing was cleaned. Run cleanup again after it stops")
+        finished=[sample for sample in children if finished_sample(sample)]
+        unfinished=[sample.name for sample in children if sample not in finished]
+        expected=set()
+        sheet=root/"resolved_samples.tsv"
+        if sheet.is_file():
+            with sheet.open(newline="") as handle:
+                expected={row.get("sample","").strip() for row in csv.DictReader(handle,delimiter="\t")}
+            expected.discard("")
+        unstarted=sorted(expected-{sample.name for sample in children})
+        if not marker.is_file():
+            print("No batch completion record: inspecting individual completed samples; shared BOLD index will be retained",flush=True)
+        for sample in finished:
+            reports.append(compact_sample(sample,dry_run=dry_run))
+        for name in unfinished:
+            print(f"SKIPPED {name}: no fresh terminal sample summary; work files retained",flush=True)
+        for name in unstarted:
+            print(f"SKIPPED {name}: sample has not started; shared work retained",flush=True)
+        fallback_pending=any(not finished_sample(sample) for sample in fallback_children)
+        if fallback_children:
             reports.extend(compact_run(fallback,dry_run))
             if not dry_run:
-                # Bring reference-unavailable samples into the same shallow parent layout.
-                parent_results={row["sample"]:row for row in read_json(root/"last_invocation.json").get("results",[])}
-                for sample in sorted(fallback.iterdir()):
-                    if not (sample/"final/summary.json").is_file():
+                parent_results={row["sample"]:row for row in read_json(marker).get("results",[])} if marker.is_file() else {}
+                for sample in fallback_children:
+                    if not finished_sample(sample):
                         continue
                     destination=root/sample.name
                     if (destination/"run_config.json").exists():
                         continue
                     independent=read_json(sample/"final/summary.json")
                     summary={**independent,**parent_results.get(sample.name,{})}
+                    if sample.name not in parent_results:
+                        summary.update(pipeline="both",status="reference_unavailable",
+                                       error="Mitochondrial reference unavailable; batch completion record absent",
+                                       failed_stages=sorted(set(independent.get("failed_stages",[])+["reference_selection"])))
                     promote_independent_final(sample,destination,summary)
-        removed=cleanup_bold_index(root,dry_run)
+        batch_finished=marker.is_file() and not unfinished and not unstarted and not fallback_pending
+        removed=cleanup_bold_index(root,dry_run) if batch_finished else 0
         if not dry_run:
             refresh_cohort(root)
-            atomic_json(root/"cleanup_summary.json",{"samples":reports,"bold_index_bytes_removed":removed})
-        print(f"{'Would remove' if dry_run else 'Removed'} {removed/1024**3:.2f} GiB of copied BOLD index",flush=True)
+            atomic_json(root/"cleanup_summary.json",{"samples":reports,"bold_index_bytes_removed":removed,
+                        "batch_completion_record_present":marker.is_file(),"batch_finished":batch_finished,
+                        "unfinished_samples":unfinished,"not_started_samples":unstarted,
+                        "shared_bold_index_retained":not batch_finished})
+        if batch_finished:
+            print(f"{'Would remove' if dry_run else 'Removed'} {removed/1024**3:.2f} GiB of copied BOLD index",flush=True)
+        else:
+            print("Shared BOLD index retained: full batch completion is not established",flush=True)
+        print(f"{'Would compact' if dry_run else 'Compacted'} {len(reports)} completed sample(s); unfinished samples were not cleaned",flush=True)
     return reports
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_dir",type=Path,help="Existing completed Tortuga cohort output directory")
+    parser.add_argument("run_dir",type=Path,help="Tortuga cohort output directory; finished samples only, while the controller is inactive")
     parser.add_argument("--dry-run",action="store_true",help="Show estimated cleanup without exporting or deleting")
     args=parser.parse_args(argv)
     compact_run(args.run_dir,args.dry_run)

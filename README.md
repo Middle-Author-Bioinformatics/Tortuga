@@ -1,10 +1,12 @@
-# MitoGenomeScanner 2.0.7
+# MitoGenomeScanner 2.0.8
 
 **Compact output is now the default:** final FASTAs, annotations and assembly
 graphs are retained, with ITSME products directly in each sample’s `final/` under
 `itsme_` names. Generated reads, mappings, WGS scratch and copied BOLD indexes
 are removed after use. Use `--keep-intermediates` for stage-level retries/debugging.
-`compact_outputs.sh` can shrink an existing completed run without rerunning tools;
+`compact_outputs.sh` can shrink finished samples in an inactive completed or
+interrupted batch without rerunning tools. It skips unfinished samples, retains
+shared indexes when completion is uncertain, and refuses active controllers;
 see `CONTROLLER.md` for the full command and retention details.
 
 **Configurable stopping:** `--accept-topology any` allows linear/unclosed

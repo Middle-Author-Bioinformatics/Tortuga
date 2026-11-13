@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.0.7"
+VERSION = "2.0.8"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],

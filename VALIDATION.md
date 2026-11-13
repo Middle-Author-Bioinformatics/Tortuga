@@ -1,8 +1,8 @@
 # Validation - 2026-11-12
 
-Controller version: 2.0.7.
+Controller version: 2.0.8.
 
-- 91 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 98 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -60,6 +60,13 @@ Controller version: 2.0.7.
   tool calls or a rebuilt BOLD database. Older reference-unavailable batches are
   migrated into the same parent final layout without changing biological status.
 - GFF-to-TSV tests retain original coordinates, strand/type and decoded names.
+
+- Partial-batch cleanup tests verify that missing batch records still allow
+  finished samples to be compacted while unfinished/planned/stale samples and
+  shared indexes remain untouched. Active locks block cleanup even without a
+  batch record; unstarted manifest entries prevent shared-index removal.
+- Independent finished ITSME results can be promoted without fabricating a batch
+  completion record; missing paths receive a separate diagnostic.
 
 The integration tests use CLI doubles and synthetic references, not the actual
 external assembly programs. No project FASTQs were supplied here, and real

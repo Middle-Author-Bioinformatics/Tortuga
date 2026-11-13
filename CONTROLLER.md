@@ -1,6 +1,6 @@
 # One controller for ITSME, MitoLooper, or both
 
-## Compact outputs by default (2.0.7)
+## Compact outputs by default (2.0.8)
 
 Completed samples now export client deliverables into `OUT/SAMPLE/final/` and
 remove generated stage work files automatically. This includes samples with
@@ -53,9 +53,15 @@ bash /home/ark/MAB/bin/Tortuga/compact_outputs.sh \
 ```
 
 An optional preview uses the same command with `--dry-run`. Specify the actual
-completed output directory if your run used a different name. This also supports
-older Tortuga output versions; no new pipeline run is needed. The cleanup refuses
-a directory still locked by an active controller or an unrecognized directory.
+output directory if your run used a different name. This also supports older
+Tortuga output versions; no new pipeline run is needed. A missing batch-level
+`last_invocation.json` no longer blocks cleanup of individual finished samples.
+Only sample directories with a fresh terminal `final/summary.json` are compacted;
+unfinished, unstarted, planned and stale-summary samples are skipped. The shared
+BOLD index is retained unless full batch completion is established.
+The cleanup still refuses the entire operation while a controller holds that
+output directory's lock. It never cleans a different run directory. A missing
+path and an unrecognized folder now produce distinct messages.
 For new runs no cleanup flag is needed: compaction is the default.
 
 ## Configurable stopping criteria (2.0.6)
@@ -131,7 +137,7 @@ sample/cohort summaries record the policy, detected genes, thresholds, failed
 checks and decision reason. Console messages now print the candidate's length,
 gene count, topology, target status and stopping decision.
 
-New analysis settings require a fresh output root: use `both_results_v207`, for example.
+New analysis settings require a fresh output root: use `both_results_v208`, for example.
 They do not alter an already-running v2.0.5 process. Changed settings/version
 cannot be resumed into old checkpoints. Existing results are retained.
 
@@ -208,7 +214,7 @@ bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
     --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
-    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v207 \
+    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v208 \
     -t 32 -m 200
 ```
 

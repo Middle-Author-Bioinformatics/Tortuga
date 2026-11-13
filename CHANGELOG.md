@@ -1,3 +1,18 @@
+# 2.0.8 - 2026-11-12
+
+- Fix an overly strict cleanup prerequisite: missing batch last_invocation.json
+  no longer prevents compacting individually completed samples in an inactive
+  or interrupted batch. Recognize ordinary Tortuga sample checkpoints instead.
+- Preserve the active-controller lock guard. Skip unfinished/planned samples,
+  unstarted manifest entries and stale summaries from interrupted retries.
+- Retain the shared BOLD index unless the batch completion record and individual
+  completion checks establish that no work remains. Do not invent completion.
+- Support parent-final export of finished independent ITSME results even without
+  the enclosing batch record; retain reference-unavailable status.
+- Give distinct missing-path, unrecognized-folder and active-controller messages.
+- Add seven regression cases for partial batches, locks without completion
+  records, stale/planned/unstarted samples, independent ITSME and missing paths.
+
 # 2.0.7 - 2026-11-12
 
 - Compact results by default after each completed sample. Export ITSME final
