@@ -217,7 +217,7 @@ def annotation_table(source):
 def rewrite_reports(root,mapping,summary):
     candidates=root/"candidates"
     assessments=[p for p in owned_files(candidates) if p.name=="assessment.json"] if candidates.is_dir() else []
-    for path in [root/"final/annotation_summary.json",*assessments]:
+    for path in [root/"final/annotation_summary.json",root/"MitoLooper/annotation_summary.json",*assessments]:
         if path.exists() and not path.is_symlink():
             atomic_json(path,rewrite(read_json(path),mapping))
     path=root/"candidates.tsv"
@@ -228,6 +228,73 @@ def rewrite_reports(root,mapping,summary):
             rows=[{key:mapping.get(value,value) for key,value in row.items()} for row in reader]
         table(path,rows,fields)
     atomic_json(root/"final/summary.json",summary)
+
+
+def standardize_layout(root):
+    """Stable branch directories for every mode; legacy final paths remain links."""
+    root=Path(root)
+    final=root/"final"
+    branches={name:root/name for name in ["ITSME","MitoLooper"]}
+    for directory in branches.values():
+        if directory.is_symlink():
+            raise ValueError(f"Refusing linked result directory: {directory}")
+        directory.mkdir(exist_ok=True)
+    mapping={}
+    for path in sorted(final.iterdir()):
+        if not path.is_file() or path.is_symlink() or path.name in {"summary.json","outputs_manifest.tsv"}:
+            continue
+        branch="ITSME" if path.name.startswith("itsme_") else "MitoLooper"
+        # Export with the original filename, then remove itsme_ only inside ITSME.
+        target=export_file(path,branches[branch],"")
+        if branch=="ITSME" and target.name.startswith("itsme_"):
+            native=target.with_name(target.name[len("itsme_"):])
+            if not native.exists():
+                target.replace(native)
+                target=native
+            elif same_bytes(target,native):
+                target.unlink()
+                target=native
+        mapping[str(path)]=str(target)
+        path.unlink()
+        path.symlink_to(os.path.relpath(target,path.parent))
+    summary=rewrite(read_json(final/"summary.json"),mapping)
+    pipeline=summary.get("pipeline","both")
+    requested_itsme=pipeline in {"itsme","both"}
+    status_itsme=("not_requested" if not requested_itsme else
+                  "completed" if summary.get("itsme_ok") is True else "failed" if summary.get("itsme_ok") is False else "not_run")
+    atomic_json(branches["ITSME"]/"status.json",{"sample":root.name,"status":status_itsme,
+                "requested":requested_itsme,"itsme_ok":summary.get("itsme_ok"),"reason":summary.get("error","") if status_itsme in {"failed","not_run"} else ""})
+    atomic_json(branches["MitoLooper"]/"status.json",{"sample":root.name,
+                "status":"not_requested" if pipeline=="itsme" else summary.get("status","unknown"),
+                "requested":pipeline!="itsme","reference_gb":summary.get("reference_gb", ""),"reason":summary.get("error","")})
+    if requested_itsme:
+        summary["itsme_output"]=str(branches["ITSME"])
+        summary["itsme_files"]=[str(p) for p in sorted(branches["ITSME"].iterdir()) if p.is_file() and p.name!="status.json"]
+    summary["mitolooper_output"]=str(branches["MitoLooper"])
+    if summary.get("annotation_dir"):
+        summary["annotation_dir"]=str(branches["MitoLooper"])
+    rewrite_reports(root,mapping,summary)
+    if pipeline!="itsme":
+        atomic_json(branches["MitoLooper"]/"summary.json",summary)
+    for path in [branches["MitoLooper"]/"annotation_summary.json"]:
+        if path.exists() and not path.is_symlink():
+            atomic_json(path,rewrite(read_json(path),mapping))
+    manifest=final/"outputs_manifest.tsv"
+    old=[]
+    if manifest.exists():
+        with manifest.open(newline="") as handle:
+            old=list(csv.DictReader(handle,delimiter="\t"))
+    entries={}
+    for row in old:
+        path=Path(mapping.get(row["retained_file"],row["retained_file"]))
+        if path.is_file() and not path.is_symlink():
+            entries[str(path)]={**row,"retained_file":str(path),"bytes":path.stat().st_size}
+    for directory in branches.values():
+        for path in directory.iterdir():
+            if path.is_file() and not path.is_symlink():
+                entries.setdefault(str(path),{"source":str(path),"retained_file":str(path),"kind":kind(path) or "metadata","bytes":path.stat().st_size})
+    table(manifest,list(entries.values()),["source","retained_file","kind","bytes"])
+    return summary
 
 
 def compact_sample(root,remove=True,dry_run=False):
@@ -241,8 +308,19 @@ def compact_sample(root,remove=True,dry_run=False):
     previous=read_json(root/"cleanup.json") if (root/"cleanup.json").exists() else {}
     if previous.get("compacted"):
         validate_retained(root)
+        if dry_run:
+            return {**previous,"dry_run":True}
+        standardize_layout(root)
+        previous["layout_version"]=1
+        if not dry_run:
+            atomic_json(root/"cleanup.json",previous)
         return previous
     protected=protected_inputs(root)
+    for name in ["ITSME","MitoLooper"]:
+        if (root/name).is_symlink():
+            raise ValueError(f"Refusing linked result directory: {root/name}")
+        if not dry_run:
+            (root/name).mkdir(exist_ok=True)
     stages=sorted(p for p in root.iterdir() if STAGE_RE.fullmatch(p.name) and p.is_dir() and not p.is_symlink())
     selected=[]
     for stage in stages:
@@ -258,8 +336,8 @@ def compact_sample(root,remove=True,dry_run=False):
             manifest=list(csv.DictReader(handle,delimiter="\t"))
     mapping={}
     for source,label,category in sorted(selected,key=lambda row:str(row[0])):
-        destination=root/"logs" if category=="log" else final
-        target=export_file(source,destination,label,dry_run)
+        destination=root/"logs" if category=="log" else root/("ITSME" if label=="itsme" else "MitoLooper")
+        target=export_file(source,destination,"" if label=="itsme" and category!="log" else label,dry_run)
         mapping[str(source)]=str(target)
         manifest.append({"source":str(source),"retained_file":str(target),"kind":category,"bytes":source.stat().st_size})
         if not dry_run and label=="mitos" and target.suffix.lower() in {".gff",".gff3"}:
@@ -272,7 +350,7 @@ def compact_sample(root,remove=True,dry_run=False):
         if re.search(r"\.(?:fastq|fq)(?:\.gz)?$",path.name,re.I):
             disposable.append(path)
     for path in owned_files(candidates) if candidates.is_dir() else []:
-        if path.name in {"sequence.fasta","screen.fasta","doubled.fasta","junction_reference.fasta","coi.fasta","junction.sam"}:
+        if path.name in {"sequence.fasta","screen.fasta","doubled.fasta","junction_reference.fasta","coi.fasta","junction.sam","reference_query.fasta","reference_hits.tsv"}:
             disposable.append(path)
     disposable=sorted(set(p for p in disposable if p.absolute() not in protected),key=str)
     # Never erase protected inputs, even if a user placed one inside a stage tree.
@@ -316,6 +394,8 @@ def compact_sample(root,remove=True,dry_run=False):
                 if not any(path.iterdir()):
                     path.rmdir()
     table(root/"cleanup_removed.tsv",deletion_rows,["path","bytes","reason"])
+    standardize_layout(root)
+    report["layout_version"]=1
     atomic_json(root/"cleanup.json",report)
     print(f"  outputs: {final}; removed {report['bytes_removed']/1024**3:.2f} GiB of stage files",flush=True)
     return report
@@ -337,7 +417,7 @@ def cleanup_bold_index(root,dry_run=False):
     if not directory.is_dir() or directory.is_symlink():
         return 0
     removed=0
-    extensions={"nhr","nin","nsq","ndb","not","ntf","nto","nal","nsd","nsi","nog"}
+    extensions={"nhr","nin","nsq","ndb","not","ntf","nto","nal","nsd","nsi","nog","njs","nos"}
     for path in directory.iterdir():
         if path.name.startswith("coi.") and path.suffix[1:] in extensions and (path.is_file() or path.is_symlink()):
             removed+=path.lstat().st_size
@@ -346,28 +426,43 @@ def cleanup_bold_index(root,dry_run=False):
     return removed
 
 
+def cleanup_reference_search(root,dry_run=False):
+    directory=Path(root)/"reference_search"
+    if not directory.is_dir() or directory.is_symlink():
+        return 0
+    removed=0
+    for path in owned_files(directory):
+        if (path.name in {"mitochondria.fasta","read_queries.fasta","reference_hits.tsv"}
+            or (path.parent==directory and path.name.startswith("mitochondria."))):
+            removed+=path.lstat().st_size
+            if not dry_run:
+                path.unlink()
+    return removed
+
+
 def promote_independent_final(source,destination,result):
-    """Place reference-unavailable ITSME products in the ordinary parent sample final."""
+    """Migrate legacy reference-unavailable outputs into the standard sample tree."""
     source,destination=Path(source),Path(destination)
     final=destination/"final"
-    if destination.is_symlink() or final.is_symlink():
-        raise ValueError(f"Refusing linked sample final directory: {destination}")
-    final.mkdir(parents=True,exist_ok=True)
+    for directory in [destination,final,destination/"ITSME",destination/"MitoLooper"]:
+        if directory.is_symlink():
+            raise ValueError(f"Refusing linked sample output: {directory}")
+        directory.mkdir(parents=True,exist_ok=True)
     mapping={}
     manifest=[]
-    for path in (source/"final").iterdir():
-        if path.is_file() and not path.is_symlink() and path.name not in {"summary.json","outputs_manifest.tsv"}:
-            target=export_file(path,final,"")
+    origin=source/"ITSME"
+    for path in origin.iterdir():
+        if path.is_file() and not path.is_symlink() and path.name!="status.json":
+            target=export_file(path,destination/"ITSME","")
             mapping[str(path)]=str(target)
             manifest.append({"source":str(path),"retained_file":str(target),"kind":kind(path) or "metadata","bytes":target.stat().st_size})
     independent=read_json(source/"final/summary.json")
-    result={**result,"final_directory":str(final),"itsme_output":str(final),
+    result={**result,"final_directory":str(final),"itsme_output":str(destination/"ITSME"),
             "itsme_files":[mapping.get(path,path) for path in independent.get("itsme_files",[])],
-            "cleanup_report":independent.get("cleanup_report",""),
-            "output_retention":independent.get("output_retention","")}
+            "cleanup_report":independent.get("cleanup_report",""),"output_retention":independent.get("output_retention","")}
     atomic_json(final/"summary.json",result)
     table(final/"outputs_manifest.tsv",manifest,["source","retained_file","kind","bytes"])
-    return result
+    return standardize_layout(destination)
 
 
 def refresh_cohort(root):
@@ -470,6 +565,8 @@ def compact_run(root,dry_run=False):
                     promote_independent_final(sample,destination,summary)
         batch_finished=marker.is_file() and not unfinished and not unstarted and not fallback_pending
         removed=cleanup_bold_index(root,dry_run) if batch_finished else 0
+        if batch_finished:
+            cleanup_reference_search(root,dry_run)
         if not dry_run:
             refresh_cohort(root)
             atomic_json(root/"cleanup_summary.json",{"samples":reports,"bold_index_bytes_removed":removed,
@@ -499,3 +596,4 @@ if __name__=="__main__":
     except (ValueError,OSError,KeyError) as error:
         print(f"ERROR: {error}",file=sys.stderr)
         sys.exit(1)
+

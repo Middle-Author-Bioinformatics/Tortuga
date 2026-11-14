@@ -1,30 +1,25 @@
-# MitoGenomeScanner 2.0.8
+# Tortuga 2.1.0
 
-**Compact output is now the default:** final FASTAs, annotations and assembly
-graphs are retained, with ITSME products directly in each sample’s `final/` under
-`itsme_` names. Generated reads, mappings, WGS scratch and copied BOLD indexes
-are removed after use. Use `--keep-intermediates` for stage-level retries/debugging.
-`compact_outputs.sh` can shrink finished samples in an inactive completed or
-interrupted batch without rerunning tools. It skips unfinished samples, retains
-shared indexes when completion is uncertain, and refuses active controllers;
-see `CONTROLLER.md` for the full command and retention details.
+Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
+statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
+graphs are in ITSME/; mitochondrial sequences, annotations and graphs are in
+MitoLooper/. Shared summaries/QC/logs remain alongside them. Compact cleanup is
+still the default; --keep-intermediates preserves work for debugging.
 
-**Configurable stopping:** `--accept-topology any` allows linear/unclosed
-candidates. Choose `--accept-rule all-genes|genes|length|either|both` and gene/length
-thresholds; the default stays strict. `--skip-wgs-if-accepted` can avoid WGS after
-successful targeted recovery. See `CONTROLLER.md` for the exact controls, caveats
-and examples.
+**Automatic reference choice now uses BLAST** against the validated local
+GenBank collection, using a bounded sample-read prefix. If the search has no
+suitable result, GetOrganelle can bootstrap with its installed animal_mt database
+and recovered contigs can be searched again. Missing local references no longer
+suppress mitochondrial recovery or WGS. Explicit reference overrides and the old
+name-based selection modes remain available. If your command explicitly uses
+--reference-match hierarchy, switch it to --reference-match blast.
 
-**Automatic references:** retain the full `kingdom`, `phylum`, `class`, `order`,
-`family`, `genus`, and `species` columns when available. `sample` and `target_taxon`
-are the minimum supported fields. Blank/missing `reference_gb` selects from `~/NOAA/mitos_genbank`
-(override with `--genbank-dir`). A blank `mt_code` is inferred only when matching
-reference annotations agree on one explicit code. See `CONTROLLER.md` for the
-selection rules, reports, and a complete command for the Tortuga installation.
-Default selection tries the target, genus, then supplied family. Broader supplied
-ranks require `--reference-min-rank order`, `class`, or `phylum`. Input taxonomy
-and extra metadata are retained in `resolved_samples.tsv`; recovery seed selection
-never broadens the target identity used for BOLD confirmation.
+See [SEQUENCE_REFERENCE_SEARCH.md](SEQUENCE_REFERENCE_SEARCH.md) for the scoring,
+support/code safeguards, defaults, evidence reports, custom-reference-free
+fallback, and migration instructions. Reference choice is separate from COI/BOLD
+target validation; it is not a phylogenetic closest-relative or identity claim.
+The default stopping policy still requires circularity and all reference genes;
+relaxed gene/length rules remain explicit options documented in CONTROLLER.md.
 
 **Unified controller:** `pipeline_controller.sh --pipeline itsme|mitolooper|both`
 selects standalone ITSME, mitochondrial recovery, or the integrated workflow.
@@ -110,8 +105,10 @@ Probe success checks launchability, not database validity or biological performa
 
 ## References and sample identities
 
-The recovery tools need suitable mitochondrial references; target validation also
-needs the intended sample identity. These cannot be inferred from `W30877`.
+Reference-dependent tools need a suitable mitochondrial reference; GetOrganelle
+can bootstrap from its installed database without a custom reference. Target
+validation still needs the intended sample identity, which cannot be inferred
+from a sample ID such as W30877.
 Create your sample sheet once:
 
 ```bash
@@ -125,8 +122,8 @@ Fill the tab-separated columns:
 | --- | --- |
 | `sample` | FASTQ stem, e.g. `W30877`. |
 | `target_taxon` | Expected species or other chosen rank, spelled as in BOLD metadata. Confirmation is only at this requested taxon, not automatically at species level. |
-| `mt_code` | Optional explicit NCBI mitochondrial translation table. Blank values are inferred only when matching reference CDS annotations agree on one explicit code; conflicting/missing codes require this override. |
-| `reference_gb` | Optional path override for ONE annotated mitochondrial genome. Blank/missing selects from `--genbank-dir` using the target taxon. Relative override paths are resolved against the sheet directory. |
+| `mt_code` | Optional explicit NCBI mitochondrial translation table. In BLAST mode, inferred only when near-best sequence-supported references agree on a code. Without a reference it remains unknown and annotation requires an explicit override. |
+| `reference_gb` | Optional path override for ONE annotated mitochondrial genome. Blank/missing uses local sequence-based BLAST selection by default. Relative override paths are resolved against the sheet directory. |
 | `seed_fasta` | Optional mitochondrial/COI nucleotide seed. If blank, the controller derives COX1 from `reference_gb`. |
 | `kingdom`, `phylum`, `class`, `order`, `family`, `genus`, `species` | Recommended full input hierarchy. Rank column names may be lower or title case. `species` may contain the epithet or full binomial. Missing ranks remain blank. |
 
@@ -146,12 +143,11 @@ or multipartite mitochondrial genomes. Single-contig linear/unclosed candidates
 can be screened and annotated under `--accept-topology any`; this is not validation
 of telomeres or biological terminal structures.
 
-An individual reference rejection no longer aborts the cohort. Other samples
-continue, and `both` runs independent ITSME for unresolved samples in
-`OUT/SAMPLE/final/` with `itsme_` filenames. Such samples
-are reported as `reference_unavailable`, with the reason in
-`reference_failures.tsv`; the command still exits nonzero to flag incomplete work.
-No mitochondrial recovery or WGS is attempted for those unresolved samples.
+An unavailable initial local reference now triggers custom-reference-free
+mitochondrial recovery in the same sample tree. In combined mode ITSME still
+runs; WGS remains available. Initial selection diagnostics are retained in
+reference_failures.tsv. See SEQUENCE_REFERENCE_SEARCH.md for bootstrap assessment
+when no gene annotation reference is available.
 
 From GenBank the controller derives: a mitochondrial FASTA for mtGrasp, COX1 seed,
 CDS translations for completeness screening, and CDS/rRNA nucleotide labels for
@@ -339,12 +335,12 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `cohort_summary.csv` | One row per sample: recovery status, winning method, reference taxon, genetic code, failure/annotation/WGS flags. |
 | `environment_selection.tsv`, `.json` | Selected stage environments and other matching installations; generated automatically when no explicit config is supplied. |
 | `cohort_gene_recovery.csv` | Per-gene reference coverage and identity for each sample's selected candidate. |
-| `SAMPLE/final/best_sequence.fasta` | Best single contiguous candidate, potentially partial or unresolved; always read its summary. |
+| `SAMPLE/MitoLooper/best_sequence.fasta` | Best single contiguous candidate, potentially partial or unresolved; always read its summary. |
 | `acceptance_policy.json` | Active stopping rule, topology, length thresholds and gene-count definition. |
-| `SAMPLE/final/accepted_candidate.fasta` | Candidate that met the selected stopping policy; may be incomplete or unclosed under relaxed settings. |
-| `SAMPLE/final/circular_target_candidate.fasta` | Written only for candidates passing circularity, reference gene recovery and COI target checks. |
+| `SAMPLE/MitoLooper/accepted_candidate.fasta` | Candidate that met the selected stopping policy; may be incomplete or unclosed under relaxed settings. |
+| `SAMPLE/MitoLooper/circular_target_candidate.fasta` | Written only for candidates passing circularity, reference gene recovery and COI target checks. |
 | `SAMPLE/final/summary.json` | Selection, evidence, statuses and caveats. |
-| `SAMPLE/final/annotation_summary.json` | MITOS2 GFF feature counts and reported gene labels. |
+| `SAMPLE/MitoLooper/annotation_summary.json` | MITOS2 GFF feature counts and reported gene labels. |
 | `SAMPLE/final/gene_recovery.csv` | CDS/rRNA homology recovery against the curated reference; CDS lengths are amino acids, rRNA lengths are nucleotides. |
 | `SAMPLE/candidates.tsv` | All assessed candidate paths, gene recovery and taxonomic/circularity decisions. |
 | `SAMPLE/candidates/*/bold_hits.tsv` | Raw COI BLAST alignments. |
@@ -352,9 +348,9 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `SAMPLE/candidates/*/assessment.json` | Per-candidate reference-gene, ambiguity and circularity evidence. |
 | `SAMPLE/stages.tsv`, `stages.json` | Every attempted, cached, skipped, failed or timed-out stage. |
 | `SAMPLE/logs/` | Exact commands and native program output. |
-| `SAMPLE/final/wgs_sampling.json` | Requested and actual assembly subset sizes, if sampling was enabled. |
-| `SAMPLE/final/mitos_*` | MITOS2 final annotation/sequence files and a GFF-derived feature TSV. |
-| `SAMPLE/final/itsme_*` | ITSME final FASTAs, tables and graphs, in standalone or combined mode. |
+| `SAMPLE/MitoLooper/wgs_sampling.json` | Requested and actual assembly subset sizes, if sampling was enabled. |
+| `SAMPLE/MitoLooper/mitos_*` | MITOS2 final annotation/sequence files and a GFF-derived feature TSV. |
+| `SAMPLE/ITSME/*` | ITSME final FASTAs, tables and graphs, in standalone or combined mode. |
 | `SAMPLE/final/outputs_manifest.tsv` | Retained output inventory and original source paths. |
 | `SAMPLE/cleanup.json`, `cleanup_removed.tsv` | Compaction statistics and removed intermediate paths. |
 
@@ -395,3 +391,4 @@ native logs and biological outputs before the complete batch.
 The shipped package contains orchestration code and your original legacy scripts;
 third-party programs, reference databases and sample biological metadata are not
 bundled.
+

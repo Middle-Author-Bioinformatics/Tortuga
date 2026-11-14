@@ -1,8 +1,8 @@
 # Validation - 2026-11-12
 
-Controller version: 2.0.8.
+Controller version: 2.1.0.
 
-- 98 tests passed using Python 3.12, Biopython and pytest, including automatic
+- 113 tests passed using Python 3.12, Biopython and pytest, including automatic
   environment selection and per-stage switching with simulated Conda/tool entry points.
 - Covered sequential method order, immediate MITOS2 annotation after read recovery,
   optional ITSME before WGS, post-WGS graph/contig fallback, early stopping,
@@ -73,3 +73,14 @@ external assembly programs. No project FASTQs were supplied here, and real
 NOVOPlasty/GetOrganelle/MitoFinder/mtGrasp/MITOS2 jobs were not run. Reference
 compatibility, recovery sensitivity and runtime require a trial on TheBelly.
 The README gives the necessary tool probes and a single-sample trial command.
+
+
+Version 2.1.0 additionally tests sequence-score ranking independent of names,
+HSP/mate deduplication, quality/phylum/code/length eligibility, near-tied code
+ambiguity, bounded read searches and contig searches, shared-index cleanup and
+unchanged search caching. Integrations cover no-reference GetOrganelle defaults,
+late sequence-based reference acquisition, direct COI validation with unknown
+completeness, genetic-code-dependent annotation, unavailable-tool WGS fallback,
+both branch directories/statuses, early QC failure and migration of preexisting
+compact output without reassembly. Native assembler jobs and real project FASTQs
+were not run; the integration programs remain CLI doubles.

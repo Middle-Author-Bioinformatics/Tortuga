@@ -64,6 +64,25 @@ elif tool in {"tblastn","blastn"}:
         for i,g in enumerate(genes):
             rows.append(f"{g}\tcandidate\t90\t200\t200\t12000\t1\t200\t{1+i*1000}\t{600+i*1000}\t1e-80\t500")
         put(output,"\n".join(rows)+"\n")
+    elif "-db" in args and Path(val("-db")).name=="mitochondria":
+        options=scenario.get("methods",{}).get("reference_search",{})
+        query=Path(val("-query"))
+        lines=query.read_text().splitlines()
+        headers=[]
+        for line in lines:
+            if line.startswith(">"):
+                headers.append([line[1:],0])
+            elif headers:
+                headers[-1][1]+=len(line.strip())
+        headers=headers[:6]
+        none=options.get("none") or (options.get("read_none") and query.name=="read_queries.fasta")
+        rows=[]
+        if not none:
+            for qid,length in headers:
+                aligned=min(length,1000)
+                sid=options.get("subject","ref000000")
+                rows.append(f"{qid}\t{sid}\t95\t{aligned}\t{length}\t12000\t1\t{aligned}\t1\t{aligned}\t1e-60\t500")
+        put(output,"\n".join(rows)+("\n" if rows else ""))
     elif "-db" in args:
         target = state.get("target","yes")
         hits = ["barcode1"] if target=="yes" else ["barcode2"] if target=="no" else ["barcode1","barcode2"]
@@ -88,3 +107,4 @@ elif tool == "minimap2":
         f"read{i}\t0\tjunction\t{450+i}\t40\t150M\t*\t0\t0\tACGT\tIIII\n" for i in range(3)))
 else:
     sys.exit("Unknown mock tool: "+tool)
+
