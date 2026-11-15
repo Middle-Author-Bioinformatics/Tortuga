@@ -62,7 +62,7 @@ def fixture(tmp_path):
     config.write_text(json.dumps({"commands":commands}))
     out=tmp_path/"results"
     argv=[str(reads),"--samples",str(sheet),"--bold-fasta",str(bold),"--bold-metadata",str(meta),
-          "--mitos-refdir",str(refdir),"--mitos-refseqver","release","--config",str(config),"-o",str(out),"--keep-intermediates","--reference-match","hierarchy"]
+          "--mitos-refdir",str(refdir),"--mitos-refseqver","release","--config",str(config),"-o",str(out),"--keep-intermediates"]
 
     def run(methods,extra=(),fail=()):
         scenario.write_text(json.dumps({"trace":str(trace),"sequence":str(seqpath),"methods":methods,"fail":list(fail)}))
@@ -705,55 +705,11 @@ def test_default_compaction_preserves_failed_stage_status_logs_and_final_itsme(f
 
 
 
-def blast_catalog(fixture,tmp_path):
-    from test_reference_selection import make_reference
-    folder=tmp_path/"catalog"
-    make_reference(folder,"LOCAL","Relative species")
-    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],
-                  ["sample","target_taxon"])
-    return ["--reference-match","blast","--genbank-dir",str(folder)]
-
-
-def test_blast_default_selects_from_sample_reads_and_preserves_evidence(fixture,tmp_path):
-    extra=blast_catalog(fixture,tmp_path)
-    fixture["argv"].remove("--keep-intermediates")
-    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},extra+["--no-assembly"])
-    assert code==0
-    with (fixture["out"]/"reference_selection.tsv").open() as handle:
-        selected=list(csv.DictReader(handle,delimiter="\t"))[0]
-    assert selected["match_level"]=="blast_reads" and selected["reference_accession"]=="LOCAL"
-    assert float(selected["search_bitscore"])>0 and int(selected["search_support_templates"])==3
-    evidence=fixture["out"]/"reference_search/W30877/selection.json"
-    assert json.loads(evidence.read_text())["selected"]["accession"]=="LOCAL"
-    assert (fixture["out"]/"reference_search/W30877/reference_ranking.tsv").exists()
-    assert not (fixture["out"]/"reference_search/mitochondria.fasta").exists()
-    assert not (fixture["out"]/"reference_search/mitochondria.nsq").exists()
-    before=len(events)
-    code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},extra+["--no-assembly","--resume"])
-    assert code==0 and len(events)==before
-
-
-def test_read_search_without_support_bootstraps_then_selects_reference_by_contig(fixture,tmp_path):
-    extra=blast_catalog(fixture,tmp_path)
-    code,events=fixture["run"]({"reference_search":{"read_none":True},
-                              "getorganelle":{"circular":True,"complete":True}},extra+["--no-assembly"])
-    assert code==0
-    tools=[e["tool"] for e in events]
-    assert "novoplasty" not in tools
-    getorg=next(e for e in events if e["tool"]=="getorganelle")
-    assert "-s" not in getorg["args"] and "--genes" not in getorg["args"]
-    result=summary(fixture)
-    assert result["winning_method"]=="getorganelle" and result["gene_screen_available"]
-    assert result["mt_code"]==5 and result["reference_gb"].endswith("LOCAL.gb")
-    evidence=json.loads((fixture["out"]/"W30877/references/sequence_selection.json").read_text())
-    assert evidence["match_level"]=="blast_contig"
-
-
 def test_no_annotated_reference_can_still_recover_and_validate_by_coi(fixture,tmp_path):
     m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species","mt_code":5}],
                   ["sample","target_taxon","mt_code"])
     code,events=fixture["run"]({"getorganelle":{"circular":False}},
-        ["--reference-match","blast","--genbank-dir",str(tmp_path/"absent"),
+        ["--genbank-dir",str(tmp_path/"absent"),
          "--accept-topology","any","--accept-rule","length","--min-accepted-bp","10000","--no-assembly"])
     assert code==0
     result=summary(fixture)
@@ -769,7 +725,7 @@ def test_no_annotated_reference_can_still_recover_and_validate_by_coi(fixture,tm
 def test_missing_reference_does_not_fabricate_completeness_or_genetic_code(fixture,tmp_path):
     m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],["sample","target_taxon"])
     code,events=fixture["run"]({"getorganelle":{"circular":True}},
-        ["--reference-match","blast","--genbank-dir",str(tmp_path/"absent"),"--no-assembly"])
+        ["--genbank-dir",str(tmp_path/"absent"),"--no-assembly"])
     result=summary(fixture)
     assert code==0 and result["status"]=="partial_target_confirmed"
     assert result["mt_code"] is None and not result["complete_by_reference"] and not result["accepted_by_policy"]
@@ -779,7 +735,7 @@ def test_missing_reference_does_not_fabricate_completeness_or_genetic_code(fixtu
 def test_accepted_reference_free_candidate_without_code_is_exported_without_guessing(fixture,tmp_path):
     m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],["sample","target_taxon"])
     code,events=fixture["run"]({"getorganelle":{"circular":True}},
-        ["--reference-match","blast","--genbank-dir",str(tmp_path/"absent"),
+        ["--genbank-dir",str(tmp_path/"absent"),
          "--accept-rule","length","--no-assembly"])
     result=summary(fixture)
     assert code==1 and result["status"]=="accepted_by_policy_annotation_unavailable"
@@ -797,7 +753,7 @@ def test_unavailable_getorganelle_and_metaspades_fall_through_to_available_megah
         result["metaspades"]=[]
         return result,rows
     monkeypatch.setattr(m,"resolve_commands",commands)
-    code,events=fixture["run"]({},["--reference-match","blast","--genbank-dir",str(tmp_path/"absent")])
+    code,events=fixture["run"]({},["--genbank-dir",str(tmp_path/"absent")])
     assert code==0
     assert "megahit" in [e["tool"] for e in events]
     assert "novoplasty" not in [e["tool"] for e in events]
@@ -821,3 +777,34 @@ def test_early_mito_failure_still_has_both_branch_directories_and_status(fixture
     assert json.loads((root/"MitoLooper/status.json").read_text())["status"]=="failed"
     assert json.loads((root/"ITSME/status.json").read_text())["status"]=="not_run"
     assert (root/"logs/qc.log").exists()
+
+
+def test_hierarchy_is_default_and_blast_selector_is_removed():
+    args = m.parser().parse_args([])
+    assert args.reference_match == "hierarchy"
+    assert args.reference_min_rank == "kingdom"
+    for removed in (["--reference-match", "blast"], ["--reference-read-pairs", "10"],
+                    ["--reference-min-identity", "80"], ["--reference-min-aligned-bp", "80"],
+                    ["--reference-min-templates", "3"]):
+        with pytest.raises(SystemExit):
+            m.parser().parse_args(removed)
+
+
+def test_default_hierarchy_selects_order_without_read_reference_search(fixture, tmp_path):
+    from test_reference_selection import make_reference
+    folder = tmp_path / "catalog"
+    ref = make_reference(folder, "LOCAL", "Relative species")
+    rec = SeqIO.read(ref, "genbank")
+    rec.annotations["taxonomy"].extend(["Annelida", "Sharedorder"])
+    SeqIO.write(rec, ref, "genbank")
+    m.write_table(fixture["sheet"], [{"sample": "W30877", "target_taxon": "Missing species",
+                  "genus": "Missing", "family": "Missingidae", "order": "Sharedorder",
+                  "phylum": "Annelida", "kingdom": "Animalia"}],
+                  ["sample", "target_taxon", "genus", "family", "order", "phylum", "kingdom"])
+    code, events = fixture["run"]({}, ["--genbank-dir", str(folder), "--no-assembly"])
+    assert code == 0
+    with (fixture["out"] / "reference_selection.tsv").open() as handle:
+        selected = next(csv.DictReader(handle, delimiter="\t"))
+    assert selected["match_rank"] == "order" and selected["reference_accession"] == "LOCAL"
+    assert not (fixture["out"] / "reference_search").exists()
+    assert not any(e["tool"] == "blastn" for e in events)

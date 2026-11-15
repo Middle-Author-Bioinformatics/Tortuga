@@ -75,12 +75,12 @@ compatibility, recovery sensitivity and runtime require a trial on TheBelly.
 The README gives the necessary tool probes and a single-sample trial command.
 
 
-Version 2.1.0 additionally tests sequence-score ranking independent of names,
-HSP/mate deduplication, quality/phylum/code/length eligibility, near-tied code
-ambiguity, bounded read searches and contig searches, shared-index cleanup and
-unchanged search caching. Integrations cover no-reference GetOrganelle defaults,
-late sequence-based reference acquisition, direct COI validation with unknown
-completeness, genetic-code-dependent annotation, unavailable-tool WGS fallback,
-both branch directories/statuses, early QC failure and migration of preexisting
-compact output without reassembly. Native assembler jobs and real project FASTQs
-were not run; the integration programs remain CLI doubles.
+Version 2.1.0 additionally tests default hierarchical fallback through kingdom,
+first matching rank preference, explicit fallback limits, Animalia/Metazoa
+aliases, phylum boundaries and genetic-code conflicts. The CLI rejects removed
+BLAST reference-selection options. Integrations cover no-reference GetOrganelle
+defaults, direct COI validation with unknown completeness, genetic-code-dependent
+annotation, unavailable-tool WGS fallback, both branch directories/statuses,
+early QC failure and migration of preexisting compact output without reassembly.
+Native assembler jobs and real project FASTQs were not run; the integration
+programs remain CLI doubles.

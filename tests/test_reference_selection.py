@@ -46,14 +46,14 @@ def test_closer_genus_precedes_better_annotated_family_record(tmp_path):
     assert chosen["accession"]=="GENUS" and chosen["match_rank"]=="genus"
 
 
-def test_order_fallback_requires_explicit_limit_and_phylum_agreement(tmp_path):
+def test_order_fallback_is_default_but_honors_limit_and_phylum_agreement(tmp_path):
     make_reference(tmp_path,"ORDER")
     catalog=load_catalog(tmp_path,reference_data)
     catalog[0]["taxonomy"].extend(["Annelida","Targetida"])
     lineage={"genus":"Missing","family":"Missingidae","order":"Targetida","phylum":"Annelida"}
     with pytest.raises(ValueError,match="No suitable"):
-        select_reference(catalog,"Missing species",match="hierarchy",lineage=lineage)
-    chosen=select_reference(catalog,"Missing species",match="hierarchy",lineage=lineage,min_rank="order")
+        select_reference(catalog,"Missing species",match="hierarchy",lineage=lineage,min_rank="family")
+    chosen=select_reference(catalog,"Missing species",lineage=lineage)
     assert chosen["match_rank"]=="order"
     with pytest.raises(ValueError,match="No suitable"):
         select_reference(catalog,"Missing species",match="hierarchy",
@@ -225,3 +225,32 @@ def test_old_rejection_cache_is_rebuilt_and_rejected_metadata_retained(tmp_path)
     rejected=load_catalog(tmp_path,reference_data)[0]
     assert "ambiguous DNA" in rejected["error"]
     assert rejected["organism"]=="Target species" and "Targetidae" in rejected["taxonomy"]
+
+
+
+@pytest.mark.parametrize("rank", ["family", "order", "class", "phylum", "kingdom"])
+def test_default_ascends_to_first_available_supplied_rank(tmp_path, rank):
+    make_reference(tmp_path, "LOCAL", "Relative species")
+    catalog = load_catalog(tmp_path, reference_data)
+    lineage = {"genus": "Missing", "family": "Missingidae", "order": "Missingida",
+               "class": "Missingclass", "phylum": "Missingphylum", "kingdom": "Animalia"}
+    if rank != "kingdom":
+        catalog[0]["taxonomy"].extend([lineage[rank], lineage["phylum"]])
+    result = select_reference(catalog, "Missing species", lineage=lineage)
+    assert result["match_rank"] == rank
+    assert result["matched_taxon"] == lineage[rank]
+
+
+def test_kingdom_fallback_can_cross_phyla_but_requires_compatible_code(tmp_path):
+    make_reference(tmp_path, "OTHER_PHYLUM", code=5)
+    catalog = load_catalog(tmp_path, reference_data)
+    lineage = {"phylum": "Absentphylum", "kingdom": "Animalia"}
+    result = select_reference(catalog, "Missing species", mt_code=5, lineage=lineage)
+    assert result["match_rank"] == "kingdom"
+    with pytest.raises(ValueError, match="No suitable"):
+        select_reference(catalog, "Missing species", mt_code=4, lineage=lineage)
+    with pytest.raises(ValueError, match="No suitable"):
+        select_reference(catalog, "Missing species", lineage=lineage, min_rank="phylum")
+    make_reference(tmp_path, "CONFLICT", code=4)
+    with pytest.raises(ValueError, match="unique mitochondrial code"):
+        select_reference(load_catalog(tmp_path, reference_data), "Missing species", lineage=lineage)

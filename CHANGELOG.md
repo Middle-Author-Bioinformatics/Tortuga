@@ -3,19 +3,17 @@
 - Standardize every processed sample with ITSME/ and MitoLooper/ branch folders
   and explicit statuses, even when a branch is disabled, fails or has no reference.
   Keep shared provenance/QC/logs and support migration of older compact flat output.
-- Default automatic reference selection to bounded read-prefix BLAST against
-  validated local animal mitochondrial genomes. Rank nonoverlapping HSP support,
-  apply identity/length/template/phylum/code filters, and retain score/ranking
-  evidence. Explicit overrides and legacy name-based modes remain supported.
-- Bootstrap missing-reference samples with GetOrganelle's installed animal_mt
-  defaults; continue ITSME/WGS normally. Reassess recovered contigs by BLAST and
-  enable reference-dependent tools if a usable reference becomes available.
+- Default automatic reference selection to annotated hierarchy matching through
+  kingdom. Stop at the closest eligible supplied rank, preserve length/code/gene
+  checks and report the matched rank. Support Animalia/Metazoa kingdom aliases.
+  Remove BLAST reference selection and read-prefix/contig selection searches.
+- Recover missing-reference samples with GetOrganelle's installed animal_mt
+  defaults; continue ITSME/WGS normally without diverting sample directories.
 - If no annotation reference exists, permit direct candidate COI/BOLD validation
   while keeping gene completeness unknown. Never guess an unprovided genetic
   code; export accepted sequence and report unavailable annotation explicitly.
-- Keep compact cleanup, active-run protection and input preservation. Remove
-  generated reference search indexes/queries/raw hits at cohort completion,
-  preserve search provenance and reuse successful unchanged selections.
+- Keep compact cleanup, active-run protection and input preservation. Retain
+  reference provenance and legacy search cleanup for older completed outputs.
 
 # 2.0.8 - 2026-11-12
 

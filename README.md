@@ -6,18 +6,16 @@ graphs are in ITSME/; mitochondrial sequences, annotations and graphs are in
 MitoLooper/. Shared summaries/QC/logs remain alongside them. Compact cleanup is
 still the default; --keep-intermediates preserves work for debugging.
 
-**Automatic reference choice now uses BLAST** against the validated local
-GenBank collection, using a bounded sample-read prefix. If the search has no
-suitable result, GetOrganelle can bootstrap with its installed animal_mt database
-and recovered contigs can be searched again. Missing local references no longer
-suppress mitochondrial recovery or WGS. Explicit reference overrides and the old
-name-based selection modes remain available. If your command explicitly uses
---reference-match hierarchy, switch it to --reference-match blast.
+**Automatic reference choice follows annotated taxonomy**: target, genus, family,
+order, class, phylum, then kingdom, stopping at the first eligible match.
+Only supplied ranks are used (genus can also be taken from a binomial target).
+BLAST reference selection has been removed. Explicit reference overrides remain
+available. If no eligible reference exists, GetOrganelle uses its installed
+animal_mt database; ITSME and WGS still run normally.
 
-See [SEQUENCE_REFERENCE_SEARCH.md](SEQUENCE_REFERENCE_SEARCH.md) for the scoring,
-support/code safeguards, defaults, evidence reports, custom-reference-free
-fallback, and migration instructions. Reference choice is separate from COI/BOLD
-target validation; it is not a phylogenetic closest-relative or identity claim.
+See [REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for rank matching,
+genetic-code safeguards, reports, reference-independent recovery and migration.
+Reference choice does not change the intended target for COI/BOLD validation.
 The default stopping policy still requires circularity and all reference genes;
 relaxed gene/length rules remain explicit options documented in CONTROLLER.md.
 
@@ -122,8 +120,8 @@ Fill the tab-separated columns:
 | --- | --- |
 | `sample` | FASTQ stem, e.g. `W30877`. |
 | `target_taxon` | Expected species or other chosen rank, spelled as in BOLD metadata. Confirmation is only at this requested taxon, not automatically at species level. |
-| `mt_code` | Optional explicit NCBI mitochondrial translation table. In BLAST mode, inferred only when near-best sequence-supported references agree on a code. Without a reference it remains unknown and annotation requires an explicit override. |
-| `reference_gb` | Optional path override for ONE annotated mitochondrial genome. Blank/missing uses local sequence-based BLAST selection by default. Relative override paths are resolved against the sheet directory. |
+| `mt_code` | Optional explicit NCBI mitochondrial translation table. Inferred only when eligible references at the closest matching rank agree on a code. Without a reference it remains unknown and annotation requires an explicit override. |
+| `reference_gb` | Optional path override for ONE annotated mitochondrial genome. Blank/missing uses local hierarchical taxonomy matching by default. Relative override paths are resolved against the sheet directory. |
 | `seed_fasta` | Optional mitochondrial/COI nucleotide seed. If blank, the controller derives COX1 from `reference_gb`. |
 | `kingdom`, `phylum`, `class`, `order`, `family`, `genus`, `species` | Recommended full input hierarchy. Rank column names may be lower or title case. `species` may contain the epithet or full binomial. Missing ranks remain blank. |
 
@@ -146,7 +144,7 @@ of telomeres or biological terminal structures.
 An unavailable initial local reference now triggers custom-reference-free
 mitochondrial recovery in the same sample tree. In combined mode ITSME still
 runs; WGS remains available. Initial selection diagnostics are retained in
-reference_failures.tsv. See SEQUENCE_REFERENCE_SEARCH.md for bootstrap assessment
+reference_failures.tsv. See REFERENCE_SELECTION.md for bootstrap assessment
 when no gene annotation reference is available.
 
 From GenBank the controller derives: a mitochondrial FASTA for mtGrasp, COX1 seed,

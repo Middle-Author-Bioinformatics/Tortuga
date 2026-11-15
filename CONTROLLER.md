@@ -1,8 +1,8 @@
 # One controller for ITSME, MitoLooper, or both
 
 Version 2.1.0 standardizes sample ITSME/ and MitoLooper/ outputs and defaults
-to sequence-based local reference selection. See
-[SEQUENCE_REFERENCE_SEARCH.md](SEQUENCE_REFERENCE_SEARCH.md) for the current
+to hierarchical local reference selection. See
+[REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for the current
 algorithm, fallback safeguards and migration behavior.
 
 ## Compact outputs by default (2.1.0)
@@ -147,16 +147,23 @@ New analysis settings require a fresh output root: use `both_results_v210`, for 
 They do not alter an already-running v2.0.5 process. Changed settings/version
 cannot be resumed into old checkpoints. Existing results are retained.
 
-## Sequence-based references (2.1.0)
+## Hierarchical references (2.1.0)
 
-The default is --reference-match blast. A bounded read-prefix BLAST chooses the
-best-supported eligible local annotated animal mitochondrial genome. Explicit
-reference_gb overrides take precedence. The old exact/genus/hierarchy modes still
-use names when explicitly selected. Initial failures now trigger GetOrganelle
-with its installed animal_mt database; ITSME and WGS are not suppressed.
-Recovered contigs can resolve a reference afterward. Unknown gene completeness
-and unknown genetic codes are never converted into complete/annotated claims.
-Detailed thresholds and evidence files are in SEQUENCE_REFERENCE_SEARCH.md.
+The defaults are `--reference-match hierarchy --reference-min-rank kingdom`.
+Try the target, genus, family, order, class, phylum, then kingdom; skip missing
+ranks and stop at the first eligible match. An explicit `reference_gb` overrides
+this search. BLAST reference selection and its read-sampling flags are removed.
+Annotation, genome length and genetic-code checks still apply. Conflicting codes
+at the closest rank require an explicit `mt_code`; the pipeline then uses
+reference-independent recovery instead of guessing. See REFERENCE_SELECTION.md.
+
+Merge the PR, then update the existing Belly checkout:
+
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+```
+
+Run both branches from scratch into a new output directory:
 
 ```bash
 bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
@@ -164,15 +171,15 @@ bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
   -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
   --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
   --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
-  --reference-match blast \
   --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
   --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
   --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
   --mitos-refseqver refseq89m \
   --itsme-db /home/ark/databases/itsme_db \
+  --sensitivity 2 \
   --validation-timeout 120 \
   -t 32 -m 200 \
-  -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v210
+  -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
 ```
 
 Run `pipeline_controller.sh` from `base`; environment switching is automatic.
@@ -226,6 +233,7 @@ bash ~/bin/MitoGenomeScanner/pipeline_controller.sh \
     --mitos-refdir /PATH/TO/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
+  --sensitivity 2 \
     -o /home/ark/MAB/NOAA/CA_intertidal/both_results \
     -t 60 -m 200
 ```

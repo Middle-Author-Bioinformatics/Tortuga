@@ -787,7 +787,7 @@ def load_bold_metadata(path):
     return rows
 
 
-def process_sample(sample, args, commands, metadata, bold_db, reference_search=None):
+def process_sample(sample, args, commands, metadata, bold_db):
     from Bio import SeqIO
     root = args.outdir/sample.sample
     root.mkdir(parents=True, exist_ok=True)
@@ -905,17 +905,6 @@ def process_sample(sample, args, commands, metadata, bold_db, reference_search=N
                 seen.add(seq)
                 count += 1
                 cdir = root/"candidates"/f"{number}_{method}_{count:03d}"
-                if not refs["genbank"] and reference_search is not None:
-                    cdir.mkdir(parents=True,exist_ok=True)
-                    query=cdir/"reference_query.fasta"
-                    fasta_write(query,"candidate",seq)
-                    choice=reference_search.query(query,sample.sample,cdir/"reference_search",sample.taxonomy,sample.mt_code,contig=True)
-                    if choice:
-                        sample.reference_gb=Path(choice["path"])
-                        sample.reference_error=""
-                        sample.mt_code=sample.mt_code or choice["mt_code"]
-                        refs=reference_files(sample,root/"references")
-                        atomic_json(root/"references/sequence_selection.json",choice)
                 candidate = assess_candidate(seq, rec.description, file.name, method, sample, refs,
                                              runner, cdir, args, bold_db, metadata,mitofinder_circle)
                 candidate["source_path"] = str(file)
@@ -1010,7 +999,7 @@ def process_sample(sample, args, commands, metadata, bold_db, reference_search=N
     summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
                "status": "planned" if args.dry_run else status,
                "target_taxon": sample.target_taxon, "taxonomy": sample.taxonomy, "mt_code": sample.mt_code,
-               "reference_gb":str(sample.reference_gb) if sample.reference_gb else "","reference_error":sample.reference_error,"reference_bootstrap_reason":inputs["sample"].get("reference_error",""),"reference_annotation_warnings":refs["annotation_warnings"],
+               "reference_gb":str(sample.reference_gb) if sample.reference_gb else "","reference_error":sample.reference_error,"reference_annotation_warnings":refs["annotation_warnings"],
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
                "accepted_by_policy":bool(winner),"strict_complete_candidate":strict_winner,
                "acceptance_policy":acceptance_policy(args),
@@ -1052,14 +1041,10 @@ def parser(require_pipeline=False):
     p.add_argument("--samples", type=Path, help="TSV with sample,target_taxon; optional mt_code,reference_gb,seed_fasta overrides")
     p.add_argument("--genbank-dir", type=Path, default=Path.home()/"NOAA/mitos_genbank",
                    help="Local annotated GenBank collection for automatic reference selection")
-    p.add_argument("--reference-match", choices=["blast","exact","genus","hierarchy"], default="blast",
-                   help="BLAST sequence support by default; exact/genus/hierarchy retain legacy name-based selection")
-    p.add_argument("--reference-read-pairs",type=int,default=10000,help="Bounded read prefix for BLAST reference selection")
-    p.add_argument("--reference-min-identity",type=float,default=80)
-    p.add_argument("--reference-min-aligned-bp",type=int,default=80)
-    p.add_argument("--reference-min-templates",type=int,default=3)
-    p.add_argument("--reference-min-rank", choices=["family","order","class","phylum"], default="family",
-                   help="Broadest allowed hierarchy fallback; does not change the expected target for BOLD")
+    p.add_argument("--reference-match", choices=["exact","genus","hierarchy"], default="hierarchy",
+                   help="Match annotated taxonomy; default: ascend supplied ranks until an eligible reference is found")
+    p.add_argument("--reference-min-rank", choices=["family","order","class","phylum","kingdom"], default="kingdom",
+                   help="Broadest hierarchy fallback (default kingdom); does not change the expected BOLD target")
     p.add_argument("--reference-index", type=Path, help="Optional SQLite index path; default: genbank-dir/tortuga_reference_index.sqlite")
     p.add_argument("--make-sample-sheet", type=Path, help="Write a blank metadata TSV and exit")
     p.add_argument("--only-sample", help="Run just one sample from the sheet")
@@ -1247,7 +1232,7 @@ def run_itsme_only(args,pairs):
         return 1 if any(r["status"]=="failed" or r.get("cleanup_error") for r in results) else 0
 
 
-def resolve_sample_reference(row, args, pair, catalog, reference_search=None):
+def resolve_sample_reference(row, args, pair, catalog):
     """Resolve one sample independently so reference errors do not abort a cohort."""
     from Bio import SeqIO
     from Bio.Data import CodonTable
@@ -1278,12 +1263,6 @@ def resolve_sample_reference(row, args, pair, catalog, reference_search=None):
         choice = {"accession":record.id,"organism":record.annotations.get("organism", ""),
                   "match_level":"manual_override","match_rank":"manual","matched_taxon":"",
                   "eligible_candidates":1,"annotation_warnings":reference_boundary_warnings(record)}
-    elif args.reference_match=="blast":
-        choice=reference_search.reads(name,pair,lineage,code) if reference_search else None
-        if choice is None:
-            raise ValueError("No sufficiently supported BLAST reference; using custom-reference-free recovery")
-        reference=Path(choice["path"])
-        code=code or choice["mt_code"]
     else:
         choice = select_reference(catalog,target,code,args.reference_match,
                                   args.min_genome_bp,args.max_genome_bp,lineage,args.reference_min_rank)
@@ -1301,9 +1280,7 @@ def resolve_sample_reference(row, args, pair, catalog, reference_search=None):
               "code_source":"sample_sheet" if code_text else "GenBank_CDS",
               "eligible_candidates":choice["eligible_candidates"],
               "annotation_warnings":choice.get("annotation_warnings",[]),
-              "selection_status":"available","reference_error":"",
-              "search_bitscore":choice.get("bitscore",""),"search_identity":choice.get("mean_identity",""),
-              "search_support_templates":choice.get("supporting_templates",""),"search_aligned_bp":choice.get("aligned_bp","")}
+              "selection_status":"available","reference_error":""}
     resolved = {**row,"sample":name,"target_taxon":target,"mt_code":code,
                 "reference_gb":str(reference),"seed_fasta":str(seed) if seed else ""}
     return sample, report, resolved
@@ -1361,8 +1338,6 @@ def main(argv=None,require_pipeline=False):
     if args.threads < 1 or args.memory < 1 or not 0 < args.assembly_percent <= 100:
         raise ValueError("Invalid threads, memory or assembly percentage")
     validate_acceptance_options(args)
-    if min(args.reference_read_pairs,args.reference_min_aligned_bp,args.reference_min_templates)<1 or not 0<args.reference_min_identity<=100:
-        raise ValueError("Invalid BLAST reference search thresholds")
     if any(getattr(args,k) <= 0 for k in ["method_timeout","assembly_timeout","annotation_timeout","validation_timeout","itsme_timeout"]):
         raise ValueError("Timeouts must be positive")
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
@@ -1405,14 +1380,10 @@ def main(argv=None,require_pipeline=False):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Another pipeline is writing this output directory")
-        reference_search=None
-        if args.reference_match=="blast":
-            from reference_blast import ReferenceSearch
-            reference_search=ReferenceSearch(catalog or [],args,Runner(args.outdir,commands,args.resume,args.dry_run))
         for row in selected:
             name = row["sample"].strip()
             try:
-                sample, report, resolved = resolve_sample_reference(row,args,pairs[name],catalog,reference_search)
+                sample, report, resolved = resolve_sample_reference(row,args,pairs[name],catalog)
             except (ValueError,OSError) as error:
                 print(f"Reference [{name}]: {error}; proceeding with reference-independent recovery",file=sys.stderr,flush=True)
                 failure = {"sample":name,"target_taxon":row["target_taxon"].strip(),
@@ -1439,8 +1410,7 @@ def main(argv=None,require_pipeline=False):
         write_table(args.outdir/"reference_selection.tsv",reference_choices,
                     ["sample","target_taxon","reference_gb","reference_accession","reference_taxon",
                      "match_level","match_rank","matched_taxon","mt_code","code_source","eligible_candidates",
-                     "selection_status","annotation_warnings","reference_error",
-                     "search_bitscore","search_identity","search_support_templates","search_aligned_bp"])
+                     "selection_status","annotation_warnings","reference_error"])
         write_table(args.outdir/"reference_failures.tsv",reference_failures,
                     ["sample","target_taxon","selection_status","reference_error"])
         atomic_json(args.outdir/"acceptance_policy.json",acceptance_policy(args))
@@ -1490,7 +1460,7 @@ def main(argv=None,require_pipeline=False):
                 print(f"\n=== {sample.sample} ===",flush=True)
                 attempt_started=time.time_ns()
                 try:
-                    result=process_sample(sample,args,commands,metadata,bdb,reference_search)
+                    result=process_sample(sample,args,commands,metadata,bdb)
                     results.append(finalize_outputs(args.outdir/sample.sample,args,result))
                 except (ValueError,RuntimeError,OSError) as e:
                     print(f"ERROR [{sample.sample}]: {e}",file=sys.stderr)
