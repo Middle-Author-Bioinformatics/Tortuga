@@ -172,7 +172,7 @@ def test_no_assembly_exports_longest_target_partial(fixture):
     assert "metaspades" not in [e["tool"] for e in events]
     assert "mitos2" not in [e["tool"] for e in events]
     assert summary(fixture)["status"]=="partial_target_confirmed"
-    assert (fixture["out"]/"W30877/final/best_sequence.fasta").exists()
+    assert (fixture["out"]/"W30877/MitoLooper/best_sequence.fasta").exists()
 
 
 def test_conflicting_bold_blocks_acceptance_and_rescue(fixture):
@@ -439,7 +439,7 @@ def test_controller_shell_uses_shared_launcher(tmp_path):
 
 
 @pytest.mark.parametrize("combined",[False,True])
-def test_reference_failure_does_not_block_other_samples_or_independent_itsme(fixture,tmp_path,combined):
+def test_missing_reference_uses_same_pipeline_without_shunting_samples(fixture,tmp_path,combined):
     import shutil
     for mate in [1,2]:
         shutil.copyfile(fixture["reads"]/f"W30877_{mate}.fq.gz",fixture["reads"]/f"NOREF_{mate}.fq.gz")
@@ -451,12 +451,12 @@ def test_reference_failure_does_not_block_other_samples_or_independent_itsme(fix
     if combined:
         extra += ["--itsme-db",str(fixture["itsmedb"])]
     code,events=fixture["run"]({"novoplasty":{"circular":True,"complete":True}},extra)
-    assert code==1
+    assert code==0
     assert summary(fixture)["status"]=="recovered_annotated"
     invocation=json.loads((fixture["out"]/"last_invocation.json").read_text())
     unavailable=next(row for row in invocation["results"] if row["sample"]=="NOREF")
-    assert unavailable["status"]=="reference_unavailable"
-    assert "reference_selection" in unavailable["failed_stages"]
+    assert unavailable["status"]=="no_candidate"
+    assert unavailable["reference_error"] and unavailable["gene_screen_available"] is False
     with (fixture["out"]/"reference_selection.tsv").open() as f:
         choices={r["sample"]:r for r in csv.DictReader(f,delimiter="\t")}
     assert choices["NOREF"]["selection_status"]=="unavailable"
@@ -464,23 +464,26 @@ def test_reference_failure_does_not_block_other_samples_or_independent_itsme(fix
     assert sum(event["tool"]=="itsme" for event in events)==(2 if combined else 0)
     if combined:
         assert unavailable["itsme_ok"] is True
-        assert Path(unavailable["itsme_output"]).joinpath("itsme_run_summary.txt").exists()
-        assert unavailable["itsme_output"]==str(fixture["out"]/"NOREF/final")
-    assert not (fixture["out"]/"NOREF/01_read_recovery").exists()
+        assert Path(unavailable["itsme_output"]).joinpath("run_summary.txt").exists()
+        assert unavailable["itsme_output"]==str(fixture["out"]/"NOREF/ITSME")
+    assert (fixture["out"]/"NOREF/ITSME").is_dir()
+    assert (fixture["out"]/"NOREF/MitoLooper").is_dir()
+    assert not (fixture["out"]/"unresolved_references_itsme").exists()
 
 
-def test_no_usable_references_still_runs_itsme_without_building_bold(fixture,tmp_path):
+def test_no_usable_references_runs_recovery_itsme_and_wgs_with_bold_validation(fixture,tmp_path):
     m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species",
                                       "mt_code":5,"reference_gb":str(tmp_path/"missing.gb")}],
                   ["sample","target_taxon","mt_code","reference_gb"])
     code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"])])
-    assert code==1
-    assert [event["tool"] for event in events]==["itsme"]
-    assert not (fixture["out"]/"bold_reference").exists()
+    assert code==0
+    assert "getorganelle" in [event["tool"] for event in events]
+    assert "metaspades" in [event["tool"] for event in events]
+    assert (fixture["out"]/"bold_reference").exists()
     result=json.loads((fixture["out"]/"last_invocation.json").read_text())["results"][0]
-    assert result["status"]=="reference_unavailable" and result["itsme_ok"] is True
+    assert result["status"]=="no_candidate" and result["itsme_ok"] is True
     code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--resume"])
-    assert code==1 and len(events)==1
+    assert code==0 and sum(e["tool"]=="itsme" for e in events)==1
 
 
 def test_linear_all_gene_candidate_stops_and_annotates_with_linear_mode(fixture):
@@ -496,7 +499,7 @@ def test_linear_all_gene_candidate_stops_and_annotates_with_linear_mode(fixture)
     assert result["accepted_by_policy"] and not result["strict_complete_candidate"]
     assert result["complete_by_reference"] and not result["circular"]
     assert result["best_candidate"]["homology_sequence_mode"]=="linear"
-    final=fixture["out"]/"W30877/final"
+    final=fixture["out"]/"W30877/MitoLooper"
     assert (final/"accepted_candidate.fasta").exists()
     assert not (final/"circular_target_candidate.fasta").exists()
     candidate_dir=fixture["out"]/"W30877/candidates"/result["best_candidate"]["candidate_id"]
@@ -610,7 +613,7 @@ def test_strict_circular_candidate_uses_doubled_screen_and_circular_annotation(f
     assert "--linear" not in annotation["args"]
     candidate_dir=fixture["out"]/"W30877/candidates"/result["best_candidate"]["candidate_id"]
     assert len(SeqIO.read(candidate_dir/"screen.fasta","fasta").seq)==24000
-    assert (fixture["out"]/"W30877/final/circular_target_candidate.fasta").exists()
+    assert (fixture["out"]/"W30877/MitoLooper/circular_target_candidate.fasta").exists()
 
 
 def test_acceptance_options_validate_before_launching_tools(fixture):
@@ -656,19 +659,19 @@ def test_default_compaction_preserves_deliverables_and_resumes_without_reassembl
     assert code==0
     root=fixture["out"]/"W30877"
     final=root/"final"
-    assert (final/"itsme_complete_ITS.fasta").exists()
-    assert (final/"itsme_master_summary.csv").exists()
-    assert (final/"itsme_run_summary.txt").exists()
-    assert (final/"mitos_result.gff").exists()
-    assert (final/"wgs_assembly_graph.fastg").exists()
-    assert (final/"wgs_contigs.fasta").exists()
+    assert (root/"ITSME/complete_ITS.fasta").exists()
+    assert (root/"ITSME/master_summary.csv").exists()
+    assert (root/"ITSME/run_summary.txt").exists()
+    assert (root/"MitoLooper/mitos_result.gff").exists()
+    assert (root/"MitoLooper/wgs_assembly_graph.fastg").exists()
+    assert (root/"MitoLooper/wgs_contigs.fasta").exists()
     assert not (root/"03_wgs").exists() and not (root/"02_itsme").exists()
     assert not list(root.rglob("*.fq.gz")) and not list(root.rglob("*.fastq.gz"))
     assert not (fixture["out"]/"bold_reference/coi.nsq").exists()
     assert (root/"qc/fastp.html").exists()
     result=summary(fixture)
-    assert result["itsme_output"]==str(final) and Path(result["best_candidate"]["fasta"]).exists()
-    assert result["annotation_dir"]==str(final)
+    assert result["itsme_output"]==str(root/"ITSME") and Path(result["best_candidate"]["fasta"]).exists()
+    assert result["annotation_dir"]==str(root/"MitoLooper")
     assert {p:p.read_bytes() for p in fixture["reads"].iterdir()}==raw_before
     before=len(events)
     code,events=fixture["run"](methods,["--pipeline","both","--itsme-db",str(fixture["itsmedb"]),"--resume"])
@@ -681,7 +684,7 @@ def test_default_compaction_applies_to_standalone_itsme_and_caches_final_results
     code,events=fixture["run"]({})
     assert code==0
     root=fixture["out"]/"W30877"
-    assert (root/"final/itsme_complete_ITS.fasta").exists()
+    assert (root/"ITSME/complete_ITS.fasta").exists()
     assert not (root/"itsme").exists()
     code,events=fixture["run"]({},["--resume"])
     assert code==0 and len(events)==1
@@ -697,5 +700,111 @@ def test_default_compaction_preserves_failed_stage_status_logs_and_final_itsme(f
     assert "wgs" in result["failed_stages"] and "mtgrasp" in result["failed_stages"]
     root=fixture["out"]/"W30877"
     assert (root/"logs/wgs.log").exists() and (root/"logs/mtgrasp.log").exists()
-    assert (root/"final/itsme_complete_ITS.fasta").exists()
+    assert (root/"ITSME/complete_ITS.fasta").exists()
     assert not (root/"03_wgs").exists()
+
+
+
+def test_no_annotated_reference_can_still_recover_and_validate_by_coi(fixture,tmp_path):
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species","mt_code":5}],
+                  ["sample","target_taxon","mt_code"])
+    code,events=fixture["run"]({"getorganelle":{"circular":False}},
+        ["--genbank-dir",str(tmp_path/"absent"),
+         "--accept-topology","any","--accept-rule","length","--min-accepted-bp","10000","--no-assembly"])
+    assert code==0
+    result=summary(fixture)
+    assert result["accepted_by_policy"] and result["target_status"]=="confirmed_target"
+    assert result["genes_expected"] is None and not result["gene_screen_available"]
+    assert not result["complete_by_reference"] and not result["strict_complete_candidate"]
+    assert result["status"]=="accepted_by_policy_annotated"
+    assert not any(e["tool"] in {"novoplasty","mitofinder","mtgrasp","tblastn"} for e in events)
+    assert (fixture["out"]/"W30877/ITSME/status.json").exists()
+    assert json.loads((fixture["out"]/"W30877/ITSME/status.json").read_text())["status"]=="not_requested"
+
+
+def test_missing_reference_does_not_fabricate_completeness_or_genetic_code(fixture,tmp_path):
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],["sample","target_taxon"])
+    code,events=fixture["run"]({"getorganelle":{"circular":True}},
+        ["--genbank-dir",str(tmp_path/"absent"),"--no-assembly"])
+    result=summary(fixture)
+    assert code==0 and result["status"]=="partial_target_confirmed"
+    assert result["mt_code"] is None and not result["complete_by_reference"] and not result["accepted_by_policy"]
+    assert not any(e["tool"]=="mitos2" for e in events)
+
+
+def test_accepted_reference_free_candidate_without_code_is_exported_without_guessing(fixture,tmp_path):
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species"}],["sample","target_taxon"])
+    code,events=fixture["run"]({"getorganelle":{"circular":True}},
+        ["--genbank-dir",str(tmp_path/"absent"),
+         "--accept-rule","length","--no-assembly"])
+    result=summary(fixture)
+    assert code==1 and result["status"]=="accepted_by_policy_annotation_unavailable"
+    assert (fixture["out"]/"W30877/MitoLooper/accepted_candidate.fasta").exists()
+    assert not any(e["tool"]=="mitos2" for e in events)
+
+
+def test_unavailable_getorganelle_and_metaspades_fall_through_to_available_megahit(fixture,tmp_path,monkeypatch):
+    m.write_table(fixture["sheet"],[{"sample":"W30877","target_taxon":"Target species","mt_code":5}],
+                  ["sample","target_taxon","mt_code"])
+    original=m.resolve_commands
+    def commands(*args,**kwargs):
+        result,rows=original(*args,**kwargs)
+        result["getorganelle"]=[]
+        result["metaspades"]=[]
+        return result,rows
+    monkeypatch.setattr(m,"resolve_commands",commands)
+    code,events=fixture["run"]({},["--genbank-dir",str(tmp_path/"absent")])
+    assert code==0
+    assert "megahit" in [e["tool"] for e in events]
+    assert "novoplasty" not in [e["tool"] for e in events]
+    assert summary(fixture)["status"]=="no_candidate"
+
+
+def test_both_output_directories_exist_in_itsme_only_mode(fixture):
+    itsme_argv(fixture)
+    code,events=fixture["run"]({})
+    assert code==0
+    sample=fixture["out"]/"W30877"
+    assert (sample/"ITSME/complete_ITS.fasta").is_file()
+    status=json.loads((sample/"MitoLooper/status.json").read_text())
+    assert status["status"]=="not_requested" and status["requested"] is False
+
+
+def test_early_mito_failure_still_has_both_branch_directories_and_status(fixture):
+    code,events=fixture["run"]({},["--pipeline","both","--itsme-db",str(fixture["itsmedb"])],fail=["fastp"])
+    assert code==1
+    root=fixture["out"]/"W30877"
+    assert json.loads((root/"MitoLooper/status.json").read_text())["status"]=="failed"
+    assert json.loads((root/"ITSME/status.json").read_text())["status"]=="not_run"
+    assert (root/"logs/qc.log").exists()
+
+
+def test_hierarchy_is_default_and_blast_selector_is_removed():
+    args = m.parser().parse_args([])
+    assert args.reference_match == "hierarchy"
+    assert args.reference_min_rank == "kingdom"
+    for removed in (["--reference-match", "blast"], ["--reference-read-pairs", "10"],
+                    ["--reference-min-identity", "80"], ["--reference-min-aligned-bp", "80"],
+                    ["--reference-min-templates", "3"]):
+        with pytest.raises(SystemExit):
+            m.parser().parse_args(removed)
+
+
+def test_default_hierarchy_selects_order_without_read_reference_search(fixture, tmp_path):
+    from test_reference_selection import make_reference
+    folder = tmp_path / "catalog"
+    ref = make_reference(folder, "LOCAL", "Relative species")
+    rec = SeqIO.read(ref, "genbank")
+    rec.annotations["taxonomy"].extend(["Annelida", "Sharedorder"])
+    SeqIO.write(rec, ref, "genbank")
+    m.write_table(fixture["sheet"], [{"sample": "W30877", "target_taxon": "Missing species",
+                  "genus": "Missing", "family": "Missingidae", "order": "Sharedorder",
+                  "phylum": "Annelida", "kingdom": "Animalia"}],
+                  ["sample", "target_taxon", "genus", "family", "order", "phylum", "kingdom"])
+    code, events = fixture["run"]({}, ["--genbank-dir", str(folder), "--no-assembly"])
+    assert code == 0
+    with (fixture["out"] / "reference_selection.tsv").open() as handle:
+        selected = next(csv.DictReader(handle, delimiter="\t"))
+    assert selected["match_rank"] == "order" and selected["reference_accession"] == "LOCAL"
+    assert not (fixture["out"] / "reference_search").exists()
+    assert not any(e["tool"] == "blastn" for e in events)

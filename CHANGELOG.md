@@ -1,3 +1,20 @@
+# 2.1.0 - 2026-11-14
+
+- Standardize every processed sample with ITSME/ and MitoLooper/ branch folders
+  and explicit statuses, even when a branch is disabled, fails or has no reference.
+  Keep shared provenance/QC/logs and support migration of older compact flat output.
+- Default automatic reference selection to annotated hierarchy matching through
+  kingdom. Stop at the closest eligible supplied rank, preserve length/code/gene
+  checks and report the matched rank. Support Animalia/Metazoa kingdom aliases.
+  Remove BLAST reference selection and read-prefix/contig selection searches.
+- Recover missing-reference samples with GetOrganelle's installed animal_mt
+  defaults; continue ITSME/WGS normally without diverting sample directories.
+- If no annotation reference exists, permit direct candidate COI/BOLD validation
+  while keeping gene completeness unknown. Never guess an unprovided genetic
+  code; export accepted sequence and report unavailable annotation explicitly.
+- Keep compact cleanup, active-run protection and input preservation. Retain
+  reference provenance and legacy search cleanup for older completed outputs.
+
 # 2.0.8 - 2026-11-12
 
 - Fix an overly strict cleanup prerequisite: missing batch last_invocation.json
@@ -157,3 +174,4 @@
   missing `aggregate_mito.sh` helper by writing cohort reports in the controller.
 - Added synthetic integration/regression tests. Real assembler performance on
   the project dataset remains to be benchmarked.
+

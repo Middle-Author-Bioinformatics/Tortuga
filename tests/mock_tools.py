@@ -88,3 +88,4 @@ elif tool == "minimap2":
         f"read{i}\t0\tjunction\t{450+i}\t40\t150M\t*\t0\t0\tACGT\tIIII\n" for i in range(3)))
 else:
     sys.exit("Unknown mock tool: "+tool)
+

@@ -1,8 +1,14 @@
 # One controller for ITSME, MitoLooper, or both
 
-## Compact outputs by default (2.0.8)
+Version 2.1.0 standardizes sample ITSME/ and MitoLooper/ outputs and defaults
+to hierarchical local reference selection. See
+[REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for the current
+algorithm, fallback safeguards and migration behavior.
 
-Completed samples now export client deliverables into `OUT/SAMPLE/final/` and
+## Compact outputs by default (2.1.0)
+
+Completed samples export client deliverables into `OUT/SAMPLE/ITSME/` and
+`OUT/SAMPLE/MitoLooper/` and
 remove generated stage work files automatically. This includes samples with
 failed mitochondrial recovery/WGS: their actual status and logs are retained.
 Cleanup does not rerun tools, change acceptance criteria or turn failures into
@@ -10,10 +16,10 @@ successful biological recovery.
 
 | Retained location | Contents |
 | --- | --- |
-| `SAMPLE/final/itsme_*.fasta`, `.csv`, `.tsv` | Native ITSME final sequences, master/partial summaries and annotation/support tables, directly alongside mito outputs. |
-| `SAMPLE/final/mitos_*` | Native MITOS2 sequences, GFF/GenBank/BED products when present, plus `mitos_result_features.tsv` generated from the GFF. |
-| `SAMPLE/final/*_assembly_graph*.fastg`, `.gfa` | Final available assembly graphs from ITSME, WGS and recovery tools. |
-| `SAMPLE/final/wgs_contigs.fasta`, `wgs_scaffolds.fasta` | Final WGS sequence products when produced; summary flags still identify a failed/timed-out WGS run. |
+| `SAMPLE/ITSME/*.fasta`, `.csv`, `.tsv` | Native ITSME final sequences, master/partial summaries and annotation/support tables, in the same sample tree as mito outputs. |
+| `SAMPLE/MitoLooper/mitos_*` | Native MITOS2 sequences, GFF/GenBank/BED products when present, plus `mitos_result_features.tsv` generated from the GFF. |
+| `SAMPLE/MitoLooper/*_assembly_graph*.fastg`, `.gfa`; `SAMPLE/ITSME/*graph*` | Final available assembly graphs from ITSME, WGS and recovery tools. |
+| `SAMPLE/MitoLooper/wgs_contigs.fasta`, `wgs_scaffolds.fasta` | Final WGS sequence products when produced; summary flags still identify a failed/timed-out WGS run. |
 | `SAMPLE/final/outputs_manifest.tsv` | Original source path, retained path, product kind and size. |
 | `SAMPLE/qc/`, `SAMPLE/logs/` | QC summaries/HTML and wrapper/native logs, including failures and timeouts. |
 | `SAMPLE/candidates/`, `candidates.tsv`, `stages.*`, `references/`, `run_config.json` | Small assessment, gene/taxon evidence, provenance and checkpoint reports. Candidate FASTA paths are updated to retained final files. |
@@ -35,7 +41,7 @@ rewrite native annotation calls. The GFF-derived TSV retains original coordinate
 feature types, strands and attributes (GFF coordinates are 1-based inclusive).
 
 Use `--keep-intermediates` to retain the full working tree for debugging or
-stage-level retry. Final products are still exported into `final/` in that mode.
+stage-level retry. Final products are still exported into the branch directories in that mode.
 The default compact mode is intended for finished deliverables: matching
 `--resume` calls reuse finalized sample results, including reported failures,
 without rebuilding the BOLD index or rerunning assembly. Removed stage work cannot
@@ -137,112 +143,44 @@ sample/cohort summaries record the policy, detected genes, thresholds, failed
 checks and decision reason. Console messages now print the candidate's length,
 gene count, topology, target status and stopping decision.
 
-New analysis settings require a fresh output root: use `both_results_v208`, for example.
+New analysis settings require a fresh output root: use `both_results_v210`, for example.
 They do not alter an already-running v2.0.5 process. Changed settings/version
 cannot be resumed into old checkpoints. Existing results are retained.
 
-## Automatic GenBank references (2.0.5)
+## Hierarchical references (2.1.0)
 
-Only `sample` and `target_taxon` are required in mitochondrial sample sheets.
-Retain the full taxonomic hierarchy whenever available: `kingdom`, `phylum`,
-`class`, `order`, `family`, `genus`, `species`. These columns now guide selection;
-they are not merely display metadata. Original IDs, authorities, and other input
-columns are preserved in `resolved_samples.tsv`. AphiaIDs are retained as AphiaIDs,
-not treated as NCBI taxonomic identifiers. The included CA intertidal example now
-contains all twelve real targets and the hierarchy provided in taxaIDs.xlsx.
-The existing template's `reference_gb`, `mt_code`, and `seed_fasta` cells may be
-left blank. An explicit reference path or genetic code still overrides selection.
+The defaults are `--reference-match hierarchy --reference-min-rank kingdom`.
+Try the target, genus, family, order, class, phylum, then kingdom; skip missing
+ranks and stop at the first eligible match. An explicit `reference_gb` overrides
+this search. BLAST reference selection and its read-sampling flags are removed.
+Annotation, genome length and genetic-code checks still apply. Conflicting codes
+at the closest rank require an explicit `mt_code`; the pipeline then uses
+reference-independent recovery instead of guessing. See REFERENCE_SELECTION.md.
 
-The controller scans `/home/ark/MAB/NOAA/mitos_genbank` by default, configurable with
-`--genbank-dir`. It reads GenBank organism/lineage annotations, not filenames or
-sequence similarity. It first selects records matching the exact organism or
-lineage name (case-insensitive, with whitespace normalized). If no suitable exact
-match exists, selection tries the supplied genus, then the supplied family.
-This is the default `--reference-match hierarchy` behavior. Missing ranks are
-skipped; they are never invented. `--reference-match genus` restores the narrower
-2.0.3 behavior, and `--reference-match exact` disables fallback. A genus/family
-target selects within that explicitly named lineage. By default, no search
-extends beyond the supplied family. `--reference-min-rank order`, `class`, or
-`phylum` explicitly permits broader searches through the corresponding supplied
-ranks. A supplied phylum must agree with the reference's annotated lineage.
-If no reference matches within the permitted scope, that sample is reported as
-`reference_unavailable`; other samples continue and the batch exits nonzero.
-It does not broaden `target_taxon` to get a seed. The nearest matching rank takes
-precedence over annotation-quality ties at more distant ranks. Exact-name matching
-still does not resolve nomenclatural synonyms automatically, but family metadata
-can provide a same-family seed despite a renamed species or genus.
+Merge the PR, then update the existing Belly checkout:
 
-Automatic candidates must identify a mitochondrial organelle and animal lineage,
-pass the same CDS/rRNA validation used by recovery, and meet the configured genome
-length and any supplied genetic-code filters. Partial/incomplete descriptions are
-excluded. Before/after annotation boundaries are accepted as homology queries
-with a warning when DNA is unambiguous and uncertain CDS features have annotated
-protein translations. Common rRNA product names are recognized without `/gene`.
-Uncertain boundaries cannot establish full-length gene recovery. Among matches,
-complete-genome descriptions, fewer boundary warnings, larger annotated CDS/rRNA
-gene sets and circular topology are preferred; accession/path settle equal ties.
-These rules select a usable taxonomic reference, not a proven closest relative
-or independently curated perfect genome. This workflow still uses `animal_mt`.
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+```
 
-A blank `mt_code` is inferred only if all eligible references at the selected
-match tier agree on one explicitly annotated CDS translation table. Missing or
-conflicting codes require a sample-sheet override. A manually specified GenBank
-reference can supply a unique code from its CDS annotations as well.
-
-The first scan of a large collection takes time; unchanged records are reused
-from `tortuga_reference_index.sqlite` in that directory. Version 2.0.5 automatically
-refreshes older cached validations once; do not delete the index manually. `--reference-index` can
-place this cache elsewhere. New/changed files are re-inspected and removed files
-are pruned. `reference_selection.tsv` records the selected accession, organism,
-match level, actual matched rank/name, code source and path. `resolved_samples.tsv`
-records usable per-sample inputs with all original taxonomy and metadata columns.
-Per-sample summaries and run checkpoints retain the input hierarchy as well.
-Neither report changes the expected target used for the BOLD gate. For example,
-a Pinnotheridae reference may seed recovery for Rathbunixa occidentalis, while
-the BOLD gate still requires Rathbunixa occidentalis, not just Pinnotheridae.
-
-For the user's current Tortuga installation and prepared databases:
+Run both branches from scratch into a new output directory:
 
 ```bash
 bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
-    --pipeline both \
-    -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
-    --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
-    --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
-    --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
-    --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
-    --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
-    --mitos-refseqver refseq89m \
-    --itsme-db /home/ark/databases/itsme_db \
-    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v208 \
-    -t 32 -m 200
+  --pipeline both \
+  -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
+  --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
+  --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
+  --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
+  --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
+  --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
+  --mitos-refseqver refseq89m \
+  --itsme-db /home/ark/databases/itsme_db \
+  --sensitivity 2 \
+  --validation-timeout 120 \
+  -t 32 -m 200 \
+  -o /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
 ```
-
-Use `--pipeline mitolooper` to omit ITSME. New controller versions/options require
-a fresh output root; existing older-version checkpoint directories are retained.
-
-If a sample has no usable reference, `both` still runs its ITSME stage under
-`OUT/SAMPLE/final/` with `itsme_` prefixes; it skips that
-sample's mitochondrial recovery and WGS. `reference_selection.tsv` records the
-failure and any boundary warnings, and `reference_failures.tsv` lists unresolved
-samples. The cohort and invocation summaries retain `reference_unavailable` and
-ITSME success/failure separately. In compact mode `--resume` reuses finalized
-results; use `--keep-intermediates` for stage retries and a new output root after
-a version change.
-
-For a run allowing Rhizophysa/unclosed candidates, use `--accept-topology any`
-and an appropriate rule above. Acceptance does not establish biological linearity
-or full terminal structures.
-
-| Consumer | Use of selected GenBank reference |
-| --- | --- |
-| MitoFinder | Passes the annotated GenBank file directly with `-r`. |
-| NOVOPlasty and read GetOrganelle | Receives a COX1 nucleotide seed extracted by this wrapper. |
-| Assembly GetOrganelle | Receives extracted nucleotide gene labels. |
-| mtGrasp | Receives the extracted mitochondrial nucleotide genome (or a confirmed rescue partial). |
-| Candidate evaluation | Uses extracted CDS proteins and rRNAs for the completeness screen and COX1 localization. |
-| MITOS2 | Uses its separate `refseq89m` release; it does not receive the selected GenBank file. |
-| ITSME and WGS assembly | Do not receive the selected mitochondrial GenBank file. |
 
 Run `pipeline_controller.sh` from `base`; environment switching is automatic.
 The required selector is `--pipeline itsme`, `--pipeline mitolooper`, or
@@ -295,6 +233,7 @@ bash ~/bin/MitoGenomeScanner/pipeline_controller.sh \
     --mitos-refdir /PATH/TO/mitos_data \
     --mitos-refseqver refseq89m \
     --itsme-db /home/ark/databases/itsme_db \
+  --sensitivity 2 \
     -o /home/ark/MAB/NOAA/CA_intertidal/both_results \
     -t 60 -m 200
 ```
@@ -319,8 +258,8 @@ When `-o` is omitted, the default directory is `itsme_results`, `mito_results`, 
 `both_results` according to the selector. Use a separate output directory when
 switching modes; checkpoints from another mode/version are not silently reused.
 
-ITSME-only and combined results are exported directly into `OUT/SAMPLE/final/`
-with `itsme_` prefixes, including native master/partial summaries and FASTAs.
+ITSME-only and combined results are exported directly into `OUT/SAMPLE/ITSME/`
+with native filenames, including native master/partial summaries and FASTAs.
 `itsme_output` in the sample/cohort summaries points there. Logs, manifests and
 cleanup records retain the original working paths for provenance. Standalone
 batches still continue after individual failures and return nonzero on failure.
@@ -330,3 +269,4 @@ The old `mito_looper.sh` and legacy `--branch mito/full` flags remain available.
 For the new controller, use the single `--pipeline` selector; incompatible legacy
 branch combinations are rejected. No third-party assembly or ITSME installation
 is bundled. The tests use synthetic tool doubles rather than real project analyses.
+

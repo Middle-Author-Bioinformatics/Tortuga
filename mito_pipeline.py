@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.0.8"
+VERSION = "2.1.0"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -155,10 +155,11 @@ class Sample:
     r1: Path
     r2: Path
     target_taxon: str
-    mt_code: int
-    reference_gb: Path
+    mt_code: int | None
+    reference_gb: Path | None
     seed_fasta: Path | None = None
     taxonomy: dict = dataclasses.field(default_factory=dict)
+    reference_error: str = ""
 
 
 def discover_pairs(folder):
@@ -335,6 +336,9 @@ def reference_data(record, mt_code):
 def reference_files(sample, folder):
     """Derive seeds and per-gene completeness queries from an annotated reference."""
     from Bio import SeqIO
+    if sample.reference_gb is None:
+        return {"seed":sample.seed_fasta,"reference":None,"genbank":None,"proteins":None,
+                "rrna":None,"labels":None,"annotation_warnings":[],"required_proteins":[],"required_rrnas":[]}
     records = list(SeqIO.parse(sample.reference_gb, "genbank"))
     if len(records) != 1:
         raise ValueError(f"{sample.sample}: reference_gb must contain ONE mitogenome")
@@ -606,6 +610,26 @@ def assess_candidate(sequence, description, filename, method, sample, refs, runn
                   homology_sequence_mode="circular_doubled" if result["circular"] else "linear")
     fasta_write(folder/"sequence.fasta",sample.sample,seq)
     fasta_write(folder/"screen.fasta","candidate",seq+seq if result["circular"] else seq)
+    # Without an annotated local reference, COI/BOLD can still validate identity.
+    # Gene completeness remains unknown and cannot satisfy all-genes/count rules.
+    if not refs["genbank"]:
+        result.update(gene_screen_available=False,genes_found=[],rrnas_found=[],missing_genes=[],missing_rrnas=[],
+                      reference_gb="",mt_code=sample.mt_code)
+        if runner.run(folder.name+"_bold","blastn",
+                      ["-query",folder/"sequence.fasta","-db",bold_db,"-task","blastn","-evalue","1e-20",
+                       "-max_target_seqs",args.bold_max_hits,"-num_threads",args.threads,
+                       "-outfmt","6 "+BLAST_FIELDS,"-out",folder/"bold_hits.tsv"],folder,
+                      args.validation_timeout*60,[folder/"bold_hits.tsv"]):
+            decision=bold_decision(blast_rows(folder/"bold_hits.tsv"),metadata,sample.target_taxon,
+                                   args.coi_identity,args.coi_coverage,args.coi_min_bp,args.bold_near_fraction,args.bold_max_hits)
+            result["target_status"]=decision["status"]
+            atomic_json(folder/"bold_evidence.json",decision)
+        else:
+            result["validation_error"]="COI/BOLD screening failed"
+        apply_acceptance(result,args)
+        atomic_json(folder/"assessment.json",result)
+        return result
+    result.update(gene_screen_available=True,reference_gb=str(sample.reference_gb),mt_code=sample.mt_code)
     # Overlap alone is retained as a review flag; it is not proof of circularity.
     ok = runner.run(folder.name+"_proteins", "tblastn",
                     ["-query", refs["proteins"], "-subject", folder/"screen.fasta",
@@ -666,6 +690,8 @@ GENE_FIELDS = ["sample","method","gene","type","reference_length","aligned_refer
 
 
 def gene_report(sample, refs, candidate, args):
+    if not refs["genbank"]:
+        return []
     from Bio import SeqIO
     rows = []
     for kind, filename, queries, min_identity in [
@@ -723,15 +749,15 @@ def method_args(method, sample, refs, r1, r2, folder, args, graph=None, contigs=
     if method == "novoplasty":
         return ["-c", novo_config(sample, refs, r1, r2, folder, args)]
     if method == "getorganelle":
-        return ["-1", r1, "-2", r2, "-s", seed, "-F", "animal_mt", "-o", folder/"output",
+        return ["-1", r1, "-2", r2] + (["-s",seed] if seed else []) + ["-F", "animal_mt", "-o", folder/"output",
                 "-t", args.threads, "-R", args.getorg_rounds, "--disentangle-time-limit", args.disentangle_seconds]
     if method == "getorganelle_assembly":
         # Assembly mode has no read seed (-s). A verified rescue sequence can label/slim the graph.
         labels = refs["labels"]
         if rescue:
             labels = folder/"rescue_labels.fasta"
-            labels.write_text(refs["labels"].read_text() + Path(rescue["fasta"]).read_text())
-        return ["-g", graph, "--genes", labels, "-F", "animal_mt", "-o", folder/"output",
+            labels.write_text((refs["labels"].read_text() if refs["labels"] else "") + Path(rescue["fasta"]).read_text())
+        return ["-g", graph] + (["--genes",labels] if labels else []) + ["-F", "animal_mt", "-o", folder/"output",
                 "-t", args.threads, "--disentangle-time-limit", args.disentangle_seconds,
                 "--expected-min-size", args.min_genome_bp, "--expected-max-size", args.max_genome_bp]
     if method.startswith("mitofinder"):
@@ -768,7 +794,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
     runner = Runner(root, commands, args.resume, args.dry_run)
     checkpoint = root/"run_config.json"
     inputs = {"sample": dataclasses.asdict(sample), "reads": [stamp(sample.r1), stamp(sample.r2)],
-              "reference_sha256": digest_file(sample.reference_gb),
+              "reference_sha256": digest_file(sample.reference_gb) if sample.reference_gb else None,
               "seed_sha256": digest_file(sample.seed_fasta) if sample.seed_fasta else None,
               "bold_fasta": stamp(args.bold_fasta), "bold_metadata_sha256": digest_file(args.bold_metadata),
               "commands": commands, "version": VERSION,
@@ -801,8 +827,10 @@ def process_sample(sample, args, commands, metadata, bold_db):
         r1, r2 = a, b
     candidates = []
     winner = None
-    final = root/"final"
+    final = root/"MitoLooper"
     final.mkdir(exist_ok=True)
+    (root/"ITSME").mkdir(exist_ok=True)
+    (root/"final").mkdir(exist_ok=True)
     if args.resume and not args.dry_run:
         for name in ["best_sequence.fasta","accepted_candidate.fasta","circular_target_candidate.fasta","annotation_summary.json"]:
             (final/name).unlink(missing_ok=True)
@@ -815,6 +843,9 @@ def process_sample(sample, args, commands, metadata, bold_db):
         shutil.copyfile(winner["fasta"],accepted_path)
         if winner["strict_complete_candidate"]:
             shutil.copyfile(winner["fasta"],final/"circular_target_candidate.fasta")
+        if sample.mt_code is None:
+            runner.skip("mitos2","Genetic code unavailable; supply mt_code to annotate without guessing")
+            return
         mitos = attempt_dir(root,runner,"mitos2",root/"05_mitos2")
         annotation_args=["-i",accepted_path,"-c",sample.mt_code,
                          "--refdir",args.mitos_refdir,"-r",args.mitos_refseqver,
@@ -833,10 +864,16 @@ def process_sample(sample, args, commands, metadata, bold_db):
                                       "reason":"MITOS2 GFF has no features"})
 
     def recover(method, number, graph=None, contigs=None):
-        nonlocal winner
+        nonlocal winner, refs
         tool = "mitofinder" if method.startswith("mitofinder") else method
+        if (tool in {"novoplasty","mitofinder","mtgrasp"} and not refs["genbank"]):
+            runner.skip(method,"No custom reference; proceeding to an available reference-independent tool")
+            return
         if tool in args.skip_method:
             runner.skip(method, "disabled by --skip-method")
+            return
+        if not commands.get(tool):
+            runner.skip(method,"Tool unavailable; proceeding to the next available recovery method")
             return
         folder = attempt_dir(root, runner, method, root/f"{number}_{method}")
         rescue = best_rescue(candidates) if method in {"getorganelle","getorganelle_assembly","mtgrasp"} else None
@@ -917,7 +954,10 @@ def process_sample(sample, args, commands, metadata, bold_db):
             if not args.dry_run:
                 counts = subsample_pairs(r1,r2,a,b,args.assembly_percent/100,args.sampling_seed)
                 atomic_json(wgs/"sampling.json", counts)
-        if args.assembler == "metaspades":
+        assembler=args.assembler
+        if not refs["genbank"] and not commands.get(assembler):
+            assembler=next((tool for tool in ["metaspades","megahit"] if commands.get(tool)),assembler)
+        if assembler == "metaspades":
             opts = ["--meta", "--only-assembler", "-1", a, "-2", b, "-o", wgs/"output",
                     "-t", args.threads, "-m", args.memory]
             graph, contigs = wgs/"output/assembly_graph.fastg", wgs/"output/contigs.fasta"
@@ -925,7 +965,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
             opts = ["-1", a, "-2", b, "-o", wgs/"output", "-t", args.threads,
                     "-m", args.memory*1024**3]
             graph, contigs = None, wgs/"output/final.contigs.fa"
-        wgs_ok = runner.run("wgs", args.assembler, opts, wgs, args.assembly_timeout*60,
+        wgs_ok = runner.run("wgs", assembler, opts, wgs, args.assembly_timeout*60,
                             [contigs] + ([graph] if graph else []))
         if not winner and wgs_ok:
             if graph:
@@ -950,6 +990,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
         runner.skip("mitos2", "No candidate met configured acceptance policy and target gates")
     strict_winner=bool(winner and winner["strict_complete_candidate"])
     status = ("recovered_annotated" if strict_winner and annotation_ok else
+              "accepted_by_policy_annotation_unavailable" if winner and sample.mt_code is None else
               "recovered_annotation_failed" if strict_winner else
               "accepted_by_policy_annotated" if winner and annotation_ok else
               "accepted_by_policy_annotation_failed" if winner else
@@ -958,22 +999,25 @@ def process_sample(sample, args, commands, metadata, bold_db):
     summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
                "status": "planned" if args.dry_run else status,
                "target_taxon": sample.target_taxon, "taxonomy": sample.taxonomy, "mt_code": sample.mt_code,
-               "reference_gb":str(sample.reference_gb),"reference_annotation_warnings":refs["annotation_warnings"],
+               "reference_gb":str(sample.reference_gb) if sample.reference_gb else "","reference_error":sample.reference_error,"reference_annotation_warnings":refs["annotation_warnings"],
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
                "accepted_by_policy":bool(winner),"strict_complete_candidate":strict_winner,
                "acceptance_policy":acceptance_policy(args),
                "complete_by_reference":bool(best and best["complete_by_reference"]),
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
-               "annotation_ok": annotation_ok, "annotation_dir": str(mitos/"output") if winner else "",
+               "annotation_ok": annotation_ok, "annotation_dir": str(mitos/"output") if mitos else "",
                "best_method": best["method"] if best else "", "best_length_bp": best["length_bp"] if best else 0,
                "circular": best["circular"] if best else False,
                "target_status": best["target_status"] if best else "unresolved",
                "genes_recovered": len(best.get("genes_found",[]))+len(best.get("rrnas_found",[])) if best else 0,
-               "genes_expected": len(refs["required_proteins"])+len(refs["required_rrnas"]),
+               "genes_expected": len(refs["required_proteins"])+len(refs["required_rrnas"]) if refs["genbank"] else None,
+               "gene_screen_available":bool(refs["genbank"]),
                "failed_stages": [e["stage"] for e in runner.events if e["status"] in {"failed", "timeout"}],
                "completeness_definition": "All reference CDS/rRNA genes pass configured homology coverage; no ambiguous bases; expected genome length. Policy acceptance can stop recovery without meeting this screen or establishing circularity. Neither screen proves full tRNA content or absence of NUMTs/chimeras."}
     atomic_json(final/"summary.json", summary)
+    atomic_json(root/"final/summary.json",summary)
     write_table(final/"gene_recovery.csv",gene_report(sample,refs,best,args),GENE_FIELDS,",")
+    write_table(root/"final/gene_recovery.csv",gene_report(sample,refs,best,args),GENE_FIELDS,",")
     atomic_json(root/"stages.json", runner.events)
     write_table(root/"candidates.tsv", candidates,
                 ["candidate_id","method","length_bp","circular","circular_evidence","terminal_overlap_bp",
@@ -998,9 +1042,9 @@ def parser(require_pipeline=False):
     p.add_argument("--genbank-dir", type=Path, default=Path.home()/"NOAA/mitos_genbank",
                    help="Local annotated GenBank collection for automatic reference selection")
     p.add_argument("--reference-match", choices=["exact","genus","hierarchy"], default="hierarchy",
-                   help="Prefer target, then genus and supplied higher ranks; default hierarchy stops at family")
-    p.add_argument("--reference-min-rank", choices=["family","order","class","phylum"], default="family",
-                   help="Broadest allowed hierarchy fallback; does not change the expected target for BOLD")
+                   help="Match annotated taxonomy; default: ascend supplied ranks until an eligible reference is found")
+    p.add_argument("--reference-min-rank", choices=["family","order","class","phylum","kingdom"], default="kingdom",
+                   help="Broadest hierarchy fallback (default kingdom); does not change the expected BOLD target")
     p.add_argument("--reference-index", type=Path, help="Optional SQLite index path; default: genbank-dir/tortuga_reference_index.sqlite")
     p.add_argument("--make-sample-sheet", type=Path, help="Write a blank metadata TSV and exit")
     p.add_argument("--only-sample", help="Run just one sample from the sheet")
@@ -1161,6 +1205,8 @@ def run_itsme_only(args,pairs):
                 elif any(root.iterdir()):
                     raise ValueError(f"{root} is nonempty without a matching checkpoint")
                 atomic_json(checkpoint,payload)
+                (root/"ITSME").mkdir(exist_ok=True)
+                (root/"MitoLooper").mkdir(exist_ok=True)
                 runner=Runner(root,commands,args.resume,args.dry_run)
                 work=attempt_dir(root,runner,"itsme",root/"itsme")
                 output=work/"output"
@@ -1321,25 +1367,11 @@ def main(argv=None,require_pipeline=False):
         raise ValueError("No samples selected")
     if any(not (row.get("reference_gb") or "").strip() for row in selected):
         from reference_selection import load_catalog
-        catalog = load_catalog(args.genbank_dir, reference_data, args.reference_index)
-    for row in selected:
-        name = row["sample"].strip()
         try:
-            sample, report, resolved = resolve_sample_reference(row,args,pairs[name],catalog)
-        except (ValueError,OSError) as error:
-            print(f"ERROR [{name}, reference]: {error}; continuing other samples",file=sys.stderr,flush=True)
-            failure = {"sample":name,"target_taxon":row["target_taxon"].strip(),
-                       "selection_status":"unavailable","reference_error":str(error)}
-            reference_failures.append(failure)
-            reference_choices.append(failure)
-            continue
-        samples.append(sample)
-        reference_choices.append(report)
-        resolved_samples.append(resolved)
-        print(f"Reference [{name}]: {report['reference_accession']} ({report['reference_taxon']}); "
-              f"{report['match_level']} [{report['matched_taxon']}]; code {report['mt_code']}",flush=True)
-        for warning in report["annotation_warnings"]:
-            print(f"  Reference warning [{name}]: {warning['gene']} {warning['location']}: {warning['reason']}",flush=True)
+            catalog = load_catalog(args.genbank_dir, reference_data, args.reference_index)
+        except ValueError as error:
+            print(f"Reference catalog unavailable: {error}; reference-independent tools remain enabled",file=sys.stderr)
+            catalog=[]
     # A scoped output lock prevents two workers writing the shared BOLD index or cohort files.
     import fcntl
     args.outdir.mkdir(parents=True,exist_ok=True)
@@ -1348,6 +1380,33 @@ def main(argv=None,require_pipeline=False):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Another pipeline is writing this output directory")
+        for row in selected:
+            name = row["sample"].strip()
+            try:
+                sample, report, resolved = resolve_sample_reference(row,args,pairs[name],catalog)
+            except (ValueError,OSError) as error:
+                print(f"Reference [{name}]: {error}; proceeding with reference-independent recovery",file=sys.stderr,flush=True)
+                failure = {"sample":name,"target_taxon":row["target_taxon"].strip(),
+                           "selection_status":"unavailable","reference_error":str(error)}
+                reference_failures.append(failure)
+                reference_choices.append(failure)
+                from reference_selection import taxonomy_from_row
+                from Bio.Data import CodonTable
+                text=(row.get("mt_code") or "").strip()
+                code=int(text) if text else None
+                if code is not None and code not in CodonTable.unambiguous_dna_by_id:
+                    raise ValueError(f"Invalid genetic code for {name}")
+                sample=Sample(name,*pairs[name],row["target_taxon"].strip(),code,None,None,taxonomy_from_row(row),str(error))
+                samples.append(sample)
+                resolved_samples.append({**row,"reference_gb":"","mt_code":code or ""})
+                continue
+            samples.append(sample)
+            reference_choices.append(report)
+            resolved_samples.append(resolved)
+            print(f"Reference [{name}]: {report['reference_accession']} ({report['reference_taxon']}); "
+                  f"{report['match_level']} [{report['matched_taxon']}]; code {report['mt_code']}",flush=True)
+            for warning in report["annotation_warnings"]:
+                print(f"  Reference warning [{name}]: {warning['gene']} {warning['location']}: {warning['reason']}",flush=True)
         write_table(args.outdir/"reference_selection.tsv",reference_choices,
                     ["sample","target_taxon","reference_gb","reference_accession","reference_taxon",
                      "match_level","match_rank","matched_taxon","mt_code","code_source","eligible_candidates",
@@ -1363,36 +1422,6 @@ def main(argv=None,require_pipeline=False):
             write_table(args.outdir/"environment_selection.tsv",environment_rows,
                         ["tool","status","environment","entrypoint","alternatives","note"])
         results = []
-        # ITSME does not depend on a mitochondrial reference. Keep its checkpoint
-        # tree separate so reference failures can be repaired without overwriting it.
-        if reference_failures and args.branch == "full":
-            fallback_args = argparse.Namespace(**vars(args))
-            fallback_args.pipeline = "itsme"
-            fallback_args.samples = None
-            fallback_args.only_sample = None
-            fallback_args.outdir = args.outdir/"unresolved_references_itsme"
-            run_itsme_only(fallback_args,{r["sample"]:pairs[r["sample"]] for r in reference_failures})
-            independent = json.loads((fallback_args.outdir/"last_invocation.json").read_text())
-            itsme_results = {r["sample"]:r for r in independent["results"]}
-        else:
-            itsme_results = {}
-        for failure in reference_failures:
-            result = {"sample":failure["sample"],"target_taxon":failure["target_taxon"],
-                      "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
-                      "status":"reference_unavailable","error":failure["reference_error"],
-                      "failed_stages":["reference_selection"]}
-            independent = itsme_results.get(failure["sample"])
-            if independent:
-                result.update(itsme_ok=independent.get("itsme_ok",False),
-                              itsme_output=independent.get("itsme_output",""))
-                if independent["status"] == "failed":
-                    result["failed_stages"].append("itsme")
-                    result["error"] += "; ITSME: " + independent.get("error","execution failed")
-                if not args.dry_run:
-                    from compact_outputs import promote_independent_final
-                    result=promote_independent_final(args.outdir/"unresolved_references_itsme"/failure["sample"],
-                                                     args.outdir/failure["sample"],result)
-            results.append(result)
         pending=[]
         for sample in samples:
             compacted=args.outdir/sample.sample/"cleanup.json"
@@ -1429,12 +1458,21 @@ def main(argv=None,require_pipeline=False):
             atomic_json(dbdir/"source.json",bold_stamp)
             for sample in samples:
                 print(f"\n=== {sample.sample} ===",flush=True)
+                attempt_started=time.time_ns()
                 try:
                     result=process_sample(sample,args,commands,metadata,bdb)
                     results.append(finalize_outputs(args.outdir/sample.sample,args,result))
                 except (ValueError,RuntimeError,OSError) as e:
                     print(f"ERROR [{sample.sample}]: {e}",file=sys.stderr)
-                    results.append({"sample":sample.sample,"status":"failed","error":str(e)})
+                    result={"sample":sample.sample,"pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
+                            "target_taxon":sample.target_taxon,"mt_code":sample.mt_code,"status":"failed","error":str(e),"itsme_ok":None}
+                    root=args.outdir/sample.sample
+                    checkpoint=root/"run_config.json"
+                    # Never replace old results when validation rejected a reused output root.
+                    if checkpoint.is_file() and checkpoint.stat().st_mtime_ns>=attempt_started:
+                        atomic_json(root/"final/summary.json",result)
+                        result=finalize_outputs(root,args,result)
+                    results.append(result)
         # Rebuild cohort table from saved per-sample summaries, preserving --only-sample runs.
         previous = {p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
         previous.update({r["sample"]:r for r in results})
@@ -1453,12 +1491,13 @@ def main(argv=None,require_pipeline=False):
         atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,
                     "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),"results":results})
         if not args.keep_intermediates and not args.dry_run:
-            from compact_outputs import cleanup_bold_index
+            from compact_outputs import cleanup_bold_index,cleanup_reference_search
+            reference_removed=cleanup_reference_search(args.outdir)
             removed=cleanup_bold_index(args.outdir)
             atomic_json(args.outdir/"cleanup_summary.json",{"bold_index_bytes_removed":removed,
-                        "sample_cleanup_reports":[r.get("cleanup_report",str(args.outdir/r["sample"]/"cleanup.json")) for r in results]})
+                        "reference_search_bytes_removed":reference_removed,"sample_cleanup_reports":[r.get("cleanup_report",str(args.outdir/r["sample"]/"cleanup.json")) for r in results]})
             print(f"Removed {removed/1024**3:.2f} GiB of copied BOLD index",flush=True)
-        return 1 if any(r["status"] in {"failed","reference_unavailable","recovered_annotation_failed","accepted_by_policy_annotation_failed"} or r.get("wgs_ok") is False
+        return 1 if any(r["status"] in {"failed","reference_unavailable","recovered_annotation_failed","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable"} or r.get("wgs_ok") is False
                        or r.get("itsme_ok") is False or r.get("cleanup_error") or (not r.get("winning_method") and r.get("failed_stages"))
                        for r in results) else 0
 
@@ -1469,3 +1508,4 @@ if __name__ == "__main__":
     except (ValueError,RuntimeError,OSError,KeyError) as error:
         print(f"ERROR: {error}",file=sys.stderr)
         sys.exit(1)
+

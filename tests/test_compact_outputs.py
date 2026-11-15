@@ -68,18 +68,18 @@ def test_compacts_completed_run_and_flattens_itsme_without_losing_evidence(compl
     root,sample,raw=completed
     c.compact_run(root)
     final=sample/"final"
-    assert (final/"itsme_complete_ITS.fasta").read_text()==">ITS\nGGGG\n"
-    assert (final/"itsme_master_summary.csv").exists()
-    assert (final/"itsme_master_summary.tsv").exists()
-    assert (final/"itsme_run_summary.txt").exists()
-    assert (final/"itsme_assembly_graph.fastg").exists()
-    assert (final/"itsme_fastp.json").exists()
+    assert (sample/"ITSME/complete_ITS.fasta").read_text()==">ITS\nGGGG\n"
+    assert (sample/"ITSME/master_summary.csv").exists()
+    assert (sample/"ITSME/master_summary.tsv").exists()
+    assert (sample/"ITSME/run_summary.txt").exists()
+    assert (sample/"ITSME/assembly_graph.fastg").exists()
+    assert (sample/"ITSME/fastp.json").exists()
     assert not list(final.glob("itsme_*frontier*"))
     assert not list(final.glob("*intermediate*"))
-    assert (final/"wgs_contigs.fasta").exists()
-    assert (final/"wgs_assembly_graph_with_scaffolds.gfa").exists()
-    assert (final/"mitos_result.gff").exists()
-    assert (final/"getorganelle_assembly_graph.fastg").exists()
+    assert (sample/"MitoLooper/wgs_contigs.fasta").exists()
+    assert (sample/"MitoLooper/wgs_assembly_graph_with_scaffolds.gfa").exists()
+    assert (sample/"MitoLooper/mitos_result.gff").exists()
+    assert (sample/"MitoLooper/getorganelle_assembly_graph.fastg").exists()
     assert not any(c.STAGE_RE.fullmatch(p.name) for p in sample.iterdir())
     assert not list(sample.rglob("*.fq.gz")) and not list(sample.rglob("*.bam"))
     assert not list(sample.rglob("*.sam"))
@@ -90,8 +90,8 @@ def test_compacts_completed_run_and_flattens_itsme_without_losing_evidence(compl
     assert not (root/"bold_reference/coi.00.nsq").exists()
     assert (root/"bold_reference/source.json").exists()
     summary=c.read_json(final/"summary.json")
-    assert summary["itsme_output"]==str(final) and summary["wgs_ok"] is False
-    assert c.read_json(final/"annotation_summary.json")["gff"]==str(final/"mitos_result.gff")
+    assert summary["itsme_output"]==str(sample/"ITSME") and summary["wgs_ok"] is False
+    assert c.read_json(final/"annotation_summary.json")["gff"]==str(sample/"MitoLooper/mitos_result.gff")
     candidate=c.read_json(sample/"candidates/011_novoplasty_001/assessment.json")
     assert Path(candidate["fasta"]).is_file() and Path(candidate["source_path"]).is_file()
     assert c.read_json(sample/"cleanup.json")["bytes_removed"]>1000
@@ -112,7 +112,7 @@ def test_cleanup_dry_run_makes_no_changes(completed):
 def test_keep_intermediates_exports_results_without_deleting(completed):
     root,sample,raw=completed
     c.compact_sample(sample,remove=False)
-    assert (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert (sample/"ITSME/complete_ITS.fasta").exists()
     assert (sample/"qc/R1.fq.gz").exists()
     assert (sample/"03_wgs/attempt_001/output/K55/huge.bin").exists()
     assert not c.read_json(sample/"cleanup.json")["compacted"]
@@ -167,14 +167,14 @@ def test_colliding_native_filenames_are_preserved_separately(completed):
     root,sample,raw=completed
     put(sample/"012_getorganelle/attempt_002/output/a.path_sequence.fasta",">different\nAAAA\n")
     c.compact_sample(sample)
-    files=list((sample/"final").glob("getorganelle_*a.path_sequence.fasta"))
+    files=list((sample/"MitoLooper").glob("getorganelle_*a.path_sequence.fasta"))
     assert len(files)==2 and len({p.read_text() for p in files})==2
 
 
 def test_missing_retained_file_is_detected_before_reusing_compacted_results(completed):
     root,sample,raw=completed
     c.compact_sample(sample)
-    (sample/"final/itsme_complete_ITS.fasta").unlink()
+    (sample/"ITSME/complete_ITS.fasta").unlink()
     with pytest.raises(ValueError,match="missing or changed"):
         c.compact_sample(sample)
 
@@ -192,7 +192,7 @@ def test_gff_feature_table_preserves_calls_and_decodes_gene_names(completed):
         "##gff-version 3\nseq\tMITOS2\tCDS\t2\t600\t.\t-\t0\tName=cox1;ID=gene1\n"
         "seq\tMITOS2\ttRNA\t700\t760\t.\t+\t.\tName=tRNA%20Lys\n")
     c.compact_sample(sample)
-    with (sample/"final/mitos_result_features.tsv").open() as handle:
+    with (sample/"MitoLooper/mitos_result_features.tsv").open() as handle:
         rows=list(csv.DictReader(handle,delimiter="\t"))
     assert rows[0]["gene"]=="cox1" and rows[0]["strand"]=="-" and rows[0]["start"]=="2"
     assert rows[1]["gene"]=="tRNA Lys" and rows[1]["feature_type"]=="tRNA"
@@ -222,7 +222,7 @@ def test_old_reference_unavailable_itsme_moves_into_parent_final_and_preserves_s
     c.atomic_json(root/"last_invocation.json",parent)
     c.compact_run(root)
     final=root/"NOREF/final"
-    assert (final/"itsme_complete_ITS.fasta").exists()
+    assert (root/"NOREF/ITSME/complete_ITS.fasta").exists()
     assert c.read_json(final/"summary.json")["status"]=="reference_unavailable"
     c.validate_retained(final.parent)
     c.compact_run(root)
@@ -235,7 +235,7 @@ def test_internal_final_product_symlink_is_materialized_before_stage_deletion(co
     link=native/"final/linked_locus.fasta"
     link.symlink_to(target)
     c.compact_sample(sample)
-    exported=sample/"final/itsme_linked_locus.fasta"
+    exported=sample/"ITSME/linked_locus.fasta"
     assert exported.read_text()==">linked_locus\nTTTT\n" and not exported.is_symlink()
     assert not target.exists()
     c.validate_retained(sample)
@@ -249,7 +249,7 @@ def test_missing_batch_record_cleans_only_finished_samples_and_retains_shared_in
     pending_reads=put(pending/"012_getorganelle/attempt_001/reads.fq.gz","unfinished work")
     pending_scratch=put(pending/"03_wgs/attempt_001/output/large.bin","unfinished scratch")
     reports=c.compact_run(root)
-    assert len(reports)==1 and (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert len(reports)==1 and (sample/"ITSME/complete_ITS.fasta").exists()
     assert not (sample/"qc/R1.fq.gz").exists()
     assert pending_reads.read_text()=="unfinished work" and pending_scratch.read_text()=="unfinished scratch"
     assert (root/"bold_reference/coi.00.nsq").exists()
@@ -267,7 +267,7 @@ def test_active_controller_is_rejected_even_without_batch_record(completed):
         with pytest.raises(ValueError,match="still running"):
             c.compact_run(root)
     assert (sample/"qc/R1.fq.gz").exists()
-    assert not (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert not (sample/"ITSME/complete_ITS.fasta").exists()
 
 
 def test_stale_terminal_summary_does_not_clean_an_interrupted_retry(completed):
@@ -296,7 +296,7 @@ def test_unstarted_samples_prevent_shared_index_removal(completed):
     root,sample,raw=completed
     put(root/"resolved_samples.tsv","sample\ttarget_taxon\nSAMPLE\tTarget\nNOT_STARTED\tOther\n")
     c.compact_run(root)
-    assert (sample/"final/itsme_complete_ITS.fasta").exists()
+    assert (sample/"ITSME/complete_ITS.fasta").exists()
     assert (root/"bold_reference/coi.00.nsq").exists()
     assert c.read_json(root/"cleanup_summary.json")["not_started_samples"]==["NOT_STARTED"]
 
@@ -310,7 +310,7 @@ def test_missing_batch_record_can_promote_finished_independent_itsme(completed):
     c.atomic_json(child/"final/summary.json",{"sample":"NOREF","status":"completed","itsme_ok":True})
     put(child/"itsme/attempt_001/output/final/complete_ITS.fasta",">ITS\nACGT\n")
     c.compact_run(root)
-    assert (root/"NOREF/final/itsme_complete_ITS.fasta").exists()
+    assert (root/"NOREF/ITSME/complete_ITS.fasta").exists()
     assert c.read_json(root/"NOREF/final/summary.json")["status"]=="reference_unavailable"
     assert (root/"bold_reference/coi.00.nsq").exists()
     assert not (root/"last_invocation.json").exists()
@@ -319,3 +319,23 @@ def test_missing_batch_record_can_promote_finished_independent_itsme(completed):
 def test_missing_directory_has_specific_error(tmp_path):
     with pytest.raises(ValueError,match="does not exist"):
         c.compact_run(tmp_path/"missing")
+
+
+
+def test_already_compacted_flat_layout_migrates_without_original_work_files(tmp_path):
+    root=tmp_path/"SAMPLE"
+    c.atomic_json(root/"run_config.json",{"reads":[],"sample":"SAMPLE"})
+    mito=put(root/"final/best_sequence.fasta",">mito\nACGT\n")
+    itsme=put(root/"final/itsme_complete_ITS.fasta",">ITS\nTGCA\n")
+    c.atomic_json(root/"final/summary.json",{"sample":"SAMPLE","pipeline":"both","status":"partial_target_confirmed",
+                                          "itsme_ok":True,"best_candidate":{"fasta":str(mito)}})
+    c.table(root/"final/outputs_manifest.tsv",[
+        {"source":str(path),"retained_file":str(path),"kind":"sequence","bytes":path.stat().st_size}
+        for path in [mito,itsme]],["source","retained_file","kind","bytes"])
+    c.atomic_json(root/"cleanup.json",{"compacted":True})
+    c.compact_sample(root)
+    assert (root/"MitoLooper/best_sequence.fasta").read_text()==">mito\nACGT\n"
+    assert (root/"ITSME/complete_ITS.fasta").read_text()==">ITS\nTGCA\n"
+    assert c.read_json(root/"final/summary.json")["best_candidate"]["fasta"]==str(root/"MitoLooper/best_sequence.fasta")
+    c.validate_retained(root)
+    c.compact_sample(root)

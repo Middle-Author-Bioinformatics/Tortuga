@@ -1,7 +1,7 @@
 """Select validated local animal mitochondrial references by annotated taxonomy.
 
 This uses GenBank organism/lineage names, not a sequence similarity search.
-Fallback follows supplied ranks, with an explicit specificity limit.
+Fallback ascends supplied ranks through kingdom by default.
 """
 import json
 from pathlib import Path
@@ -113,8 +113,8 @@ def load_catalog(directory, validator, index_path=None):
     return rows
 
 
-def select_reference(catalog, target, mt_code=None, match="genus", min_bp=10000, max_bp=30000,
-                     lineage=None, min_rank="family"):
+def select_reference(catalog, target, mt_code=None, match="hierarchy", min_bp=10000, max_bp=30000,
+                     lineage=None, min_rank="kingdom"):
     """Prefer the nearest available named rank, then annotation quality."""
     query = normalized(target)
     if not query:
@@ -126,8 +126,8 @@ def select_reference(catalog, target, mt_code=None, match="genus", min_bp=10000,
     if match in {"genus","hierarchy"} and genus and normalized(genus) != query:
         tiers.append(("same_genus", "genus", genus))
     if match == "hierarchy":
-        if min_rank not in {"family","order","class","phylum"}:
-            raise ValueError("Reference minimum rank must be family, order, class, or phylum")
+        if min_rank not in {"family","order","class","phylum","kingdom"}:
+            raise ValueError("Reference minimum rank must be family, order, class, phylum, or kingdom")
         for rank in RANKS[RANKS.index("family"):RANKS.index(min_rank)+1]:
             if lineage.get(rank) and normalized(lineage[rank]) != query:
                 tiers.append((f"same_{rank}", rank, lineage[rank]))
@@ -138,17 +138,20 @@ def select_reference(catalog, target, mt_code=None, match="genus", min_bp=10000,
         if mt_code is not None and row["mt_code"] not in {None, mt_code}:
             continue
         names = {normalized(x) for x in row["taxonomy"] + [row["organism"]]}
-        # Prevent cross-phylum choices when the input supplies a phylum.
-        if lineage.get("phylum") and normalized(lineage["phylum"]) not in names:
-            continue
+        # Animalia and Metazoa name the same kingdom in supported input/catalogs.
+        if names & {"animalia", "metazoa"}:
+            names.update({"animalia", "metazoa"})
         for tier, (level,rank,taxon) in enumerate(tiers):
+            # Cross-phylum fallback is allowed only at an explicit kingdom tier.
+            if rank != "kingdom" and lineage.get("phylum") and normalized(lineage["phylum"]) not in names:
+                continue
             if normalized(taxon) in names:
                 matches.append((row,level,rank,taxon,tier))
                 break
     if not matches:
         raise ValueError(f"No suitable local mitochondrial reference for {target!r} with the requested length/code settings. "
-                         "Add an appropriate annotated GenBank record, supply the family/order hierarchy with an appropriate "
-                         "--reference-min-rank, or set reference_gb explicitly. Keep target_taxon as the intended identity.")
+                         "Add an appropriate annotated GenBank record, supply the full taxonomy through kingdom, "
+                         "relax --reference-min-rank if restricted, or set reference_gb explicitly. Keep target_taxon as the intended identity.")
     closest = min(item[4] for item in matches)
     matches = [item for item in matches if item[4] == closest]
     if mt_code is None:
@@ -161,3 +164,4 @@ def select_reference(catalog, target, mt_code=None, match="genus", min_bp=10000,
     row, level, rank, taxon, _ = matches[0]
     return {**row, "match_level": level,"match_rank":rank,"matched_taxon":taxon,
             "eligible_candidates": len(matches)}
+
