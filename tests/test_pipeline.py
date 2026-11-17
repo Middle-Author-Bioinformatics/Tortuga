@@ -808,3 +808,27 @@ def test_default_hierarchy_selects_order_without_read_reference_search(fixture, 
     assert selected["match_rank"] == "order" and selected["reference_accession"] == "LOCAL"
     assert not (fixture["out"] / "reference_search").exists()
     assert not any(e["tool"] == "blastn" for e in events)
+
+
+@pytest.mark.parametrize('mode', ['itsme', 'both'])
+@pytest.mark.parametrize('compact', [True, False])
+def test_cohort_reports_its_length_and_predicted_taxonomy_in_all_output_modes(fixture, mode, compact):
+    if mode == 'itsme':
+        itsme_argv(fixture)
+        extra = []
+    else:
+        extra = ['--pipeline', 'both', '--itsme-db', str(fixture['itsmedb']), '--no-assembly']
+    if compact:
+        fixture['argv'].remove('--keep-intermediates')
+    code, events = fixture['run']({}, extra)
+    assert code == 0
+    with (fixture['out']/'cohort_summary.csv').open() as handle:
+        row = next(csv.DictReader(handle))
+    assert row['itsme_complete_locus_count'] == '1'
+    assert json.loads(row['itsme_its_lengths_bp']) == [8]
+    assert json.loads(row['itsme_locus_lengths_bp']) == [1500]
+    assert json.loads(row['itsme_taxa']) == ['Target species']
+    assert json.loads(row['itsme_taxonomy_ranks']) == ['species']
+    with (fixture['out']/'cohort_its_loci.csv').open() as handle:
+        locus = next(csv.DictReader(handle))
+    assert locus['its_length_bp'] == '8' and locus['taxon'] == 'Target species'

@@ -258,6 +258,8 @@ def standardize_layout(root):
         path.unlink()
         path.symlink_to(os.path.relpath(target,path.parent))
     summary=rewrite(read_json(final/"summary.json"),mapping)
+    from itsme_reporting import summarize_itsme
+    summary.update(summarize_itsme(root,summary)[0])
     pipeline=summary.get("pipeline","both")
     requested_itsme=pipeline in {"itsme","both"}
     status_itsme=("not_requested" if not requested_itsme else
@@ -487,6 +489,8 @@ def refresh_cohort(root):
         invocation=read_json(path)
         invocation["results"]=[{**row,**summaries.get(row["sample"],{})} for row in invocation.get("results",[])]
         atomic_json(path,invocation)
+    from itsme_reporting import refresh_itsme_reports
+    refresh_itsme_reports(root)
 
 
 def finished_sample(sample):
@@ -497,7 +501,7 @@ def finished_sample(sample):
         return False
     result=read_json(summary)
     if result.get("status") not in {"completed","failed","recovered_annotated","recovered_annotation_failed",
-            "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","partial_target_confirmed",
+            "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable","partial_target_confirmed",
             "unresolved_candidate","no_candidate","reference_unavailable"}:
         return False
     # A newer checkpoint can indicate an interrupted retry with a stale old summary.

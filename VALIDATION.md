@@ -84,3 +84,10 @@ annotation, unavailable-tool WGS fallback, both branch directories/statuses,
 early QC failure and migration of preexisting compact output without reassembly.
 Native assembler jobs and real project FASTQs were not run; the integration
 programs remain CLI doubles.
+
+Version 2.1.1 tests ITS cassette versus full-locus length, inclusive/reverse
+coordinates, matching extracted FASTA fallback, multiple loci with distinct taxa,
+reconstructed graph-source taxonomy mapping, unknown ranks and missing evidence,
+partial/chimera exclusion, zero versus unavailable counts, retained mitochondrial
+columns and files, active locks and stale samples. Integration coverage checks
+both standalone and combined modes with and without compact cleanup.

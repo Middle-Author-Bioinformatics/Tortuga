@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -1224,11 +1224,14 @@ def run_itsme_only(args,pairs):
                 print(f"ERROR [{name}]: {error}",file=sys.stderr)
                 result={"sample":name,"pipeline":"itsme","status":"failed","error":str(error)}
             results.append(result)
+        from itsme_reporting import ITS_FIELDS, refresh_itsme_reports
         previous={p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
         previous.update({r["sample"]:r for r in results})
         write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
-                    ["sample","pipeline","status","itsme_ok","itsme_output","final_directory","failed_stages","error","cleanup_error"],",")
+                    ["sample","pipeline","status","itsme_ok","itsme_output","final_directory","failed_stages","error","cleanup_error",*ITS_FIELDS],",")
         atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,"pipeline":"itsme","results":results})
+        if not args.dry_run:
+            refresh_itsme_reports(args.outdir)
         return 1 if any(r["status"]=="failed" or r.get("cleanup_error") for r in results) else 0
 
 
@@ -1474,13 +1477,14 @@ def main(argv=None,require_pipeline=False):
                         result=finalize_outputs(root,args,result)
                     results.append(result)
         # Rebuild cohort table from saved per-sample summaries, preserving --only-sample runs.
+        from itsme_reporting import ITS_FIELDS, refresh_itsme_reports
         previous = {p.parent.parent.name:json.loads(p.read_text()) for p in args.outdir.glob("*/final/summary.json")}
         previous.update({r["sample"]:r for r in results})
         write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
                     ["sample","pipeline","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
                      "circular","target_status","genes_recovered","genes_expected","candidate_count",
                      "accepted_by_policy","strict_complete_candidate","complete_by_reference","acceptance_policy",
-                     "itsme_ok","itsme_output","final_directory","wgs_ok","annotation_ok","failed_stages","error","cleanup_error"],",")
+                     "itsme_ok","itsme_output","final_directory","wgs_ok","annotation_ok","failed_stages","error","cleanup_error",*ITS_FIELDS],",")
         gene_rows = []
         for name, row in previous.items():
             path = args.outdir/name/"final/gene_recovery.csv"
@@ -1490,6 +1494,8 @@ def main(argv=None,require_pipeline=False):
         write_table(args.outdir/"cohort_gene_recovery.csv",gene_rows,GENE_FIELDS,",")
         atomic_json(args.outdir/"last_invocation.json",{"version":VERSION,
                     "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),"results":results})
+        if not args.dry_run:
+            refresh_itsme_reports(args.outdir)
         if not args.keep_intermediates and not args.dry_run:
             from compact_outputs import cleanup_bold_index,cleanup_reference_search
             reference_removed=cleanup_reference_search(args.outdir)

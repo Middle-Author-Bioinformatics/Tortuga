@@ -79,7 +79,11 @@ elif tool in {"metaspades","megahit"}:
 elif tool == "itsme":
     put(Path(val("-o"))/"run_summary.txt","mock ITS complete\n")
     put(Path(val("-o"))/"final/complete_ITS.fasta",">ITS\nACGTACGT\n")
-    put(Path(val("-o"))/"master_summary.csv","locus,status\nITS,complete\n")
+    put(Path(val("-o"))/"master_summary.csv",
+        "contig,locus_type,length_bp,ITS1_coordinates,5.8S_coordinates,ITS2_coordinates,taxonomy_status,consensus_taxonomy\n"
+        "ITS,COMPLETE_DUAL_ANCHOR,1500,501-502,503-506,507-508,PASS_taxonomically_coherent,Metazoa; Target; Target species\n")
+    put(Path(val("-o"))/"final/taxonomy_validation.tsv",
+        "contig\tconsensus_genus\tconsensus_species\nITS\tTarget\tTarget species\n")
     put(Path(val("-o"))/"final/accepted_R1.fastq.gz","discard recruited reads")
 elif tool == "mitos2":
     put(Path(val("-o"))/"result.gff","##gff-version 3\ncandidate\tMITOS2\tgene\t1\t600\t.\t+\t.\tName=cox1\n")
