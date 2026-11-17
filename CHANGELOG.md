@@ -1,3 +1,16 @@
+# 2.1.1 - 2026-11-16
+
+- Include reported ITSME locus counts, ITS cassette and full locus lengths, and
+  consensus taxa/ranks in the cohort summary for combined and ITSME-only runs.
+  Preserve multiple loci as aligned arrays rather than choosing one taxon.
+- Add cohort_its_loci.csv with one row per complete reported locus, separate
+  ITS1/5.8S/ITS2 lengths, full consensus lineage and taxonomy status. Missing
+  results are distinguished from zero recovery; partials/chimeras are excluded.
+- Add refresh_reports.sh for existing completed output. It reads saved native or
+  compact ITSME evidence and refreshes reports without analysis or cleanup,
+  respecting the active-run lock and skipping stale/unfinished summaries.
+- Retain ITS reporting during output compaction, migration and compact resume.
+
 # 2.1.0 - 2026-11-14
 
 - Standardize every processed sample with ITSME/ and MitoLooper/ branch folders

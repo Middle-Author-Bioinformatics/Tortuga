@@ -1,4 +1,4 @@
-# Tortuga 2.1.0
+# Tortuga 2.1.1
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -100,6 +100,40 @@ from the `mito_workflow` environment: unlisted tools are resolved from its PATH.
 The help probes also save tool help/version text in `tool_checks.json`. An
 installed tool returning nonzero for `-h` needs inspection, even if usable.
 Probe success checks launchability, not database validity or biological performance.
+
+## ITS results in the cohort summary (2.1.1)
+
+`cohort_summary.csv` now includes `itsme_complete_locus_count`,
+`itsme_locus_ids`, `itsme_its_lengths_bp`, `itsme_locus_lengths_bp`,
+`itsme_taxa`, `itsme_taxonomy_ranks` and `itsme_reporting_status`.
+The list-valued cells are JSON arrays in matching locus order. ITS length means
+ITS1–5.8S–ITS2, distinct from the full rDNA locus length. It is computed from
+inclusive ITSx coordinates, with matching extracted ITS FASTA as a fallback.
+Unknown lengths or assignments remain unknown; a missing report is not zero loci.
+Taxa are the deepest ITSME consensus assignments, not supplied targets or seed
+reference names. Rank labels come from explicit consensus rank fields; older
+reports with only lineage text retain the taxon with an unknown rank.
+
+`cohort_its_loci.csv` is the easier table for reviewing multiple loci: one row per
+reported complete locus, with full locus length, ITS cassette length, separate
+ITS1/5.8S/ITS2 lengths, consensus taxon/rank/lineage and taxonomy status. Partials
+and chimeras are not counted as complete loci; they remain in native ITSME outputs.
+New runs create both tables automatically in combined and standalone ITSME mode.
+
+To update existing completed results after merging the PR:
+
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+
+bash /home/ark/MAB/bin/Tortuga/refresh_reports.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
+```
+
+This command only refreshes reporting files. It does not launch analyses, move
+assemblies or perform cleanup. It refuses an active controller and skips stale
+or unfinished sample summaries. It can read current compact, legacy prefixed
+final, and retained native ITSME reports. Missing native evidence requires no
+invented taxonomic assignment and is reported explicitly.
 
 ## References and sample identities
 
@@ -330,7 +364,8 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 
 | Path | Contents |
 | --- | --- |
-| `cohort_summary.csv` | One row per sample: recovery status, winning method, reference taxon, genetic code, failure/annotation/WGS flags. |
+| `cohort_summary.csv` | One row per sample: mitochondrial recovery and execution flags, plus reported ITSME locus counts, ITS/locus lengths and consensus taxa/ranks. |
+| `cohort_its_loci.csv` | One row per reported complete ITSME locus: ITS cassette/region lengths, full locus length and consensus taxonomy. |
 | `environment_selection.tsv`, `.json` | Selected stage environments and other matching installations; generated automatically when no explicit config is supplied. |
 | `cohort_gene_recovery.csv` | Per-gene reference coverage and identity for each sample's selected candidate. |
 | `SAMPLE/MitoLooper/best_sequence.fasta` | Best single contiguous candidate, potentially partial or unresolved; always read its summary. |

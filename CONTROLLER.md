@@ -5,6 +5,27 @@ to hierarchical local reference selection. See
 [REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for the current
 algorithm, fallback safeguards and migration behavior.
 
+## ITS lengths and taxonomy in cohort reports (2.1.1)
+
+`cohort_summary.csv` includes `itsme_complete_locus_count`, matching JSON arrays
+of locus IDs, full locus lengths, ITS1–5.8S–ITS2 lengths, consensus taxa and ranks,
+and `itsme_reporting_status`. `cohort_its_loci.csv` gives one row per reported
+complete locus, with individual region lengths and the full consensus lineage.
+Taxonomy comes from ITSME evidence; expected target names are not predictions.
+
+Existing completed results need only a reporting refresh, after updating Tortuga:
+
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+
+bash /home/ark/MAB/bin/Tortuga/refresh_reports.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
+```
+
+This does not run analysis or cleanup. It refuses active runs and skips unfinished
+or stale sample summaries. New combined and ITSME-only runs include these reports
+automatically, with or without compact cleanup.
+
 ## Compact outputs by default (2.1.0)
 
 Completed samples export client deliverables into `OUT/SAMPLE/ITSME/` and
