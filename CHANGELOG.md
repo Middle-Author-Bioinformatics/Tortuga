@@ -1,3 +1,22 @@
+# 2.2.0 - 2026-11-17
+
+- Add an offline dashboard.html that travels with the result directory, with a
+  sample list and focused Mitogenome, ITS/rDNA and Run record views. Embed all
+  display data/styles/scripts; retain relative links to native deliverables.
+- Display mitochondrial sequence evidence, MITOS gene/annotation maps and tables,
+  ITSME loci/lengths/consensus taxonomy, read QC, stage outcomes and cohort length
+  comparisons. Keep detailed tables collapsed and separate target expectations
+  from predicted taxonomy and COI target validation.
+- Render bounded real GFA1/FASTG graph previews with pan/zoom, oriented links,
+  segment metadata and original downloads. Label WGS/method graph scope, missing
+  graphs, preview limits and unsupported GFA2 explicitly; never fabricate graphs.
+- Add build_dashboard.sh for existing inactive runs. Automatically regenerate
+  after report refresh, including new completed runs and compaction. Preserve
+  active-run guards, scientific outcomes, input files and heavy work files.
+- Test relocation/offline embedding, graph parsing, annotation coordinates,
+  absent/empty/stale results, lock protection and DOM interactions. No new
+  production environment dependencies.
+
 # 2.1.1 - 2026-11-16
 
 - Include reported ITSME locus counts, ITS cassette and full locus lengths, and

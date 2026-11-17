@@ -5,6 +5,25 @@ to hierarchical local reference selection. See
 [REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for the current
 algorithm, fallback safeguards and migration behavior.
 
+## Portable offline dashboard (2.2.0)
+
+`dashboard.html` now accompanies the cohort reports. It combines a quiet sample
+list with mitogenome gene maps/metrics, ITS locus maps and consensus taxonomy,
+retained GFA1/FASTG graph previews, annotation tables, stage outcomes and relative
+file downloads. It works by opening the file directly; move the whole result
+folder to preserve downloads. New completed runs, report refresh and compaction
+build it automatically.
+
+For existing output, after merging the PR and pulling Tortuga:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/build_dashboard.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
+```
+
+This only writes dashboard.html and refuses active runs. See DASHBOARD.md for
+preview bounds, supported graph formats, evidence interpretation and validation.
+
 ## ITS lengths and taxonomy in cohort reports (2.1.1)
 
 `cohort_summary.csv` includes `itsme_complete_locus_count`, matching JSON arrays

@@ -91,3 +91,12 @@ reconstructed graph-source taxonomy mapping, unknown ranks and missing evidence,
 partial/chimera exclusion, zero versus unavailable counts, retained mitochondrial
 columns and files, active locks and stale samples. Integration coverage checks
 both standalone and combined modes with and without compact cleanup.
+
+Version 2.2.0 adds offline dashboard tests for embedded assets and moved-folder
+links, preserved input files, GFA1/FASTG orientation/self loops and bounded previews,
+GFA2 download-only behavior, GFF bounds/multiple contigs, missing/empty/stale
+results, HTML/script-like text, external links and active-run locks. Report refresh
+and existing pipeline integrations cover automatic generation. A jsdom-only test
+checks filtering, sample/branch/locus changes, features, graphs, zoom controls,
+comparison and missing-result states. Local Chromium could not launch, and the
+cloud browser blocked file:// previews; visual browser rendering was not verified.
