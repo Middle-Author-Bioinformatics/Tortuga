@@ -1,4 +1,4 @@
-# Tortuga 2.1.1
+# Tortuga 2.2.0
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -100,6 +100,26 @@ from the `mito_workflow` environment: unlisted tools are resolved from its PATH.
 The help probes also save tool help/version text in `tool_checks.json`. An
 installed tool returning nonzero for `-h` needs inspection, even if usable.
 Probe success checks launchability, not database validity or biological performance.
+
+## Portable HTML dashboard (2.2.0)
+
+Open `dashboard.html` in the results directory for a sample-centered view of
+mitogenome sequences and annotations, ITS loci and consensus taxonomy, retained
+assembly graphs, QC and stage outcomes. It works offline and travels with the
+whole results folder. Gene/region maps, graph previews and display data are
+embedded; original downloads use relative links. New completed runs and report
+refreshes generate it automatically. No additional production libraries are needed.
+
+Build it for an existing run without rerunning analysis or cleanup:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/build_dashboard.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
+```
+
+See [DASHBOARD.md](DASHBOARD.md) for deployment, graph limits and interpretation.
+Missing products stay explicitly unavailable; the display does not change the
+underlying taxonomy or completeness calls.
 
 ## ITS results in the cohort summary (2.1.1)
 

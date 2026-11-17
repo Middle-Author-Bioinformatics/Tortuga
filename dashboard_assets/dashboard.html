@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tortuga · assembly report</title>
+<style>/*__STYLE__*/</style>
+</head>
+<body>
+<a class="skip" href="#workspace">Skip to results</a>
+<aside class="sidebar">
+  <a class="brand" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 11 16 5 25 11 25 22 16 28 7 22Z M7 11 16 17 25 11 M16 17V28 M16 5V17"/></svg><span>Tortuga<small>ASSEMBLY FIELD NOTES</small></span></a>
+  <div class="collection"><span class="eyebrow">Collection</span><h1 id="report-title"></h1><p id="cohort-counts"></p></div>
+  <label class="search"><span class="sr-only">Find a sample or taxon</span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><input id="search" type="search" placeholder="Find sample or taxon" autocomplete="off"></label>
+  <div class="list-caption"><span>Samples</span><span title="First dot: mitogenome accepted. Second dot: complete ITS reported.">MITO / ITS</span></div>
+  <nav id="sample-list" aria-label="Samples"></nav>
+  <div class="sidebar-foot"><button id="compare" class="text-button">Compare sample lengths <span aria-hidden="true">↗</span></button><span class="offline">●&nbsp; Offline report</span><small id="built"></small></div>
+</aside>
+<main id="workspace" tabindex="-1">
+  <header class="page-head"><span class="eyebrow" id="sample-position"></span><div id="cohort-files" class="download-menu"></div></header>
+  <section class="identity"><div><h2 id="sample-name"></h2><p id="expected-name"></p></div><span id="sample-status" class="status"></span></section>
+  <nav id="branch-tabs" class="branch-tabs" aria-label="Result views"><button data-branch="mito" aria-current="page">Mitogenome</button><button data-branch="its">ITS / rDNA</button><button data-branch="run">Run record</button></nav>
+  <div id="view"></div>
+  <footer class="page-foot"><span>Tortuga · local assembly report</span><span>Interpret each sequence with its recovery and taxonomic evidence.</span></footer>
+</main>
+<dialog id="comparison"><div class="dialog-head"><div><span class="eyebrow">Across the collection</span><h2>Sequence lengths</h2></div><button id="close-comparison" aria-label="Close comparison">×</button></div><p class="muted">Mitochondrial best candidate and longest reported complete ITS cassette per sample. Separate scales; a candidate is not necessarily accepted.</p><div id="comparison-chart"></div></dialog>
+<script type="application/json" id="report-data">__REPORT_DATA__</script>
+<script>/*__SCRIPT__*/</script>
+</body>
+</html>

@@ -195,6 +195,14 @@ def refresh_itsme_reports(root):
         for row in content.get('results', []):
             row.update(updates.get(row.get('sample'), {}))
         atomic_json(invocation, content)
+    # The dashboard only reads saved evidence; report generation must never rerun analysis.
+    if updates:
+        from build_dashboard import write_dashboard
+        try:
+            write_dashboard(root)
+        except (OSError, ValueError, TypeError, csv.Error) as error:
+            import sys
+            print(f"WARNING: Dashboard could not be generated: {error}", file=sys.stderr)
     return len(updates), len(loci)
 
 
