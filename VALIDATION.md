@@ -100,3 +100,11 @@ and existing pipeline integrations cover automatic generation. A jsdom-only test
 checks filtering, sample/branch/locus changes, features, graphs, zoom controls,
 comparison and missing-result states. Local Chromium could not launch, and the
 cloud browser blocked file:// previews; visual browser rendering was not verified.
+
+Version 2.3.0 tests default annotation of unclosed/unresolved candidates without
+promotion, explicit accepted-only/disabled policies, missing-code handling,
+clear BOLD score boundaries versus truly truncated ties, adaptive expansion and
+hard caps, saved-output annotation/revalidation without assembler/ITSME calls,
+annotation caching, active locks and continued annotation after BOLD failure.
+ITSME tests distinguish successful zero-complete-locus runs, partial counts and
+actual execution timeouts. Native MITOS2 jobs on real Belly data were not run.

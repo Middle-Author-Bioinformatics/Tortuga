@@ -57,6 +57,16 @@ rebuild it. Report-generation errors warn without turning a completed assembly
 into a failed analysis; the standalone builder reports errors directly. No new
 production dependencies are required beyond the existing Python environment.
 
+## Updated assessment labels (2.3.0)
+
+The MITOS map can now represent an exploratory annotation of an unclosed or
+unresolved candidate. Its scope is labeled; annotation does not establish target
+identity or acceptance. BOLD reasons are retained in the saved evidence and
+cohort summary. In the ITS view, the badge reports **ITSME execution**, independent
+of the overall mitochondrial outcome; complete/partial locus counts remain
+separate. A successfully completed ITSME run with no complete loci is not a
+program failure.
+
 ## How to interpret the views
 
 - An **accepted assembly** met the selected run policy. A **best candidate** may

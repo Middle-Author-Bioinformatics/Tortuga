@@ -1,3 +1,22 @@
+# 2.3.0 - 2026-11-18
+
+- Annotate the best retained mitochondrial candidate by default, independently of
+  circularity, gene completeness and target acceptance. Use MITOS linear mode
+  for unclosed candidates and label exploratory annotations. Preserve all
+  original acceptance criteria; do not guess unknown genetic codes.
+- Replace unconditional BOLD hit-limit rejection with near-best score-boundary
+  checks and adaptive tenfold expansion from 500 up to 50,000 subjects. Keep
+  genuinely truncated/tied evidence at the hard cap unresolved, and record
+  search attempts, scores and decision reasons.
+- Add annotate_existing.sh to annotate saved candidates without reassembly or
+  ITSME. Optional --recheck-bold repeats COI validation under the original policy.
+  Cache unchanged annotations, retain prior summaries/stages, refresh output
+  inventories/cohort/dashboard and remove only owned postprocessing scratch.
+  BOLD search failure does not prevent annotation.
+- Separate ITSME execution status from complete/partial locus recovery counts.
+  Display branch-specific ITSME badges and available diagnostic reasons, so
+  successful zero-complete-locus runs are not presented as execution failures.
+
 # 2.2.0 - 2026-11-17
 
 - Add an offline dashboard.html that travels with the result directory, with a

@@ -239,6 +239,12 @@ def collect_sample(sample, root):
                         sample/'final/mitos_result.gff', sample/'final/result.gff'], root)
     if annotation is None:
         annotation = first(sorted((sample/'MitoLooper').glob('mitos_*.gff*')), root)
+    annotation_report=first([sample/'MitoLooper/annotation_summary.json',sample/'final/annotation_summary.json'],root)
+    if annotation_report:
+        gff=read_json(annotation_report,warnings).get('gff','')
+        if gff:
+            recorded=first([Path(gff),sample/'MitoLooper'/Path(gff).name],root)
+            annotation=recorded or annotation
     gene_data = annotations(annotation, length, root)
     cells, loci = summarize_itsme(sample, summary)
     report = first_file(sample, ['master_summary.csv', 'master_summary.tsv'])
@@ -298,10 +304,12 @@ def collect_sample(sample, root):
                 'circular': summary.get('circular'), 'method': summary.get('winning_method') or summary.get('best_method', ''),
                 'genes_recovered': summary.get('genes_recovered'), 'genes_expected': summary.get('genes_expected'),
                 'complete_by_reference': summary.get('complete_by_reference'), 'target_status': summary.get('target_status', 'unresolved'),
-                'annotation_ok': summary.get('annotation_ok'), 'annotation': gene_data, 'hits': hits,
+                'annotation_ok': summary.get('annotation_ok'), 'annotation_status': summary.get('annotation_status',''),
+                'annotation_scope':summary.get('annotation_scope',''), 'target_reason':summary.get('target_reason') or evidence.get('reason',''), 'annotation': gene_data, 'hits': hits,
                 'evidence_file': relative_file(sample/'candidates'/candidate_id/'bold_evidence.json', root) if candidate_id else None,
                 'files': mito_files, 'graphs': graphs['MitoLooper']},
-            'its': {'status': cells.get('itsme_reporting_status'), 'count': cells.get('itsme_complete_locus_count'),
+            'its': {'status': cells.get('itsme_reporting_status'), 'run_status':cells.get('itsme_run_status'),
+                    'partial_count':cells.get('itsme_partial_locus_count'), 'diagnostic_reason':cells.get('itsme_diagnostic_reason'), 'count': cells.get('itsme_complete_locus_count'),
                     'loci': loci, 'files': its_files, 'graphs': graphs['ITSME'],
                     'summary_file': relative_file(report, root),
                     'sequence': relative_file(its_sequence, root), 'cassette_sequence': relative_file(its_cassette, root)},

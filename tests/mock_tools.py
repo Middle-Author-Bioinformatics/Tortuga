@@ -67,7 +67,9 @@ elif tool in {"tblastn","blastn"}:
     elif "-db" in args:
         target = state.get("target","yes")
         hits = ["barcode1"] if target=="yes" else ["barcode2"] if target=="no" else ["barcode1","barcode2"]
-        put(output,"\n".join(f"COI\t{x}\t99\t600\t600\t650\t1\t600\t1\t600\t1e-100\t1000" for x in hits)+"\n")
+        if target=="expand":
+            hits=["barcode1"] if int(val("-max_target_seqs"))==1 else ["barcode1","barcode2"]
+        put(output,"\n".join(f"COI\t{x}\t99\t600\t600\t650\t1\t600\t1\t600\t1e-100\t{400 if target=='expand' and x=='barcode2' else 1000}" for x in hits)+"\n")
     else:
         put(output,"rrns\tcandidate\t90\t1000\t1000\t24000\t1\t1000\t8000\t8999\t1e-80\t500\n" if state.get("rrna",state.get("complete")) else "")
 elif tool in {"metaspades","megahit"}:

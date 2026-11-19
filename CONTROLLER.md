@@ -5,6 +5,40 @@ to hierarchical local reference selection. See
 [REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for the current
 algorithm, fallback safeguards and migration behavior.
 
+## Annotation and BOLD validation (2.3.0)
+
+Default `--annotation-policy best` annotates the best retained mitochondrial
+candidate regardless of circularity, reference-gene recovery or target status.
+MITOS2 uses `--linear` for unclosed sequences. Annotation is labeled exploratory
+unless the candidate passed the original acceptance policy; the policy itself
+is unchanged. A known genetic code remains required. `accepted` and `none` are
+explicit annotation-policy alternatives.
+
+For an existing inactive run, after updating Tortuga:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/annotate_existing.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy \
+  --recheck-bold
+```
+
+Saved per-sample options supply the database paths, genetic codes and environment
+commands. No assemblies or ITSME analyses are repeated. Omit `--recheck-bold` to
+annotate without repeating COI validation. Existing unchanged annotations are
+cached. The helper exports annotations, preserves old summaries/stages for audit,
+updates cohort tables/dashboard, and removes only its own successful attempt
+scratch and generated BOLD index. See README.md for overrides and retry controls.
+
+BOLD starts at `--bold-max-hits 500`. A saturated near-best score boundary expands
+the search up to `--bold-search-max-hits 50000`; a full result page with a clear
+score gap no longer causes unconditional rejection. Incomplete near-best evidence
+at the hard cap and true taxonomic conflicts stay unresolved.
+
+ITSME badges now use its own execution outcome, not the overall mitochondrial
+status. `itsme_run_status`, `itsme_partial_locus_count` and
+`itsme_diagnostic_reason` distinguish execution failures from successful runs
+that recovered no complete ITS-containing loci.
+
 ## Portable offline dashboard (2.2.0)
 
 `dashboard.html` now accompanies the cohort reports. It combines a quiet sample
@@ -230,7 +264,7 @@ or as the positional argument. Samples run sequentially.
 | Selector | What runs | Reference requirements |
 | --- | --- | --- |
 | `itsme` | ITSME nuclear 18S/ITS/28S recovery only | Existing ITSME rRNA database root; no BOLD, mitochondrial references, MITOS models, or sample sheet required. |
-| `mitolooper` | Initial mito recovery, MITOS2 for passing candidates, optional WGS assembly and mito fallback | Same mitochondrial sample sheet, BOLD and MITOS2 references as MitoLooper. ITSME is not called. |
+| `mitolooper` | Initial mito recovery, MITOS2 for the best retained candidate, optional WGS assembly and mito fallback | Same mitochondrial sample sheet, BOLD and MITOS2 references as MitoLooper. ITSME is not called. |
 | `both` | Initial mito recovery/annotation, then ITSME once, then WGS and post-WGS mito fallback if enabled/needed | All mitochondrial references plus the ITSME rRNA root. |
 
 `both` uses the integrated workflow rather than launching two independent full

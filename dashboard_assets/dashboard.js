@@ -141,6 +141,7 @@ function mitoView(sample) {
   const host = el('div'); root.append(host);
   if (state.mode === 'graph') renderGraph(mito.graphs, host);
   else {
+    if(mito.annotation_scope==='exploratory_candidate') host.append(el('p',{class:'note warning'},'Exploratory MITOS annotation of the retained candidate. Its identity and acceptance status remain separate.'));
     const features = mito.annotation.features;
     const types = new Set(['CDS', 'rRNA', 'tRNA', 'ncRNA']);
     const selected = features.some(feature => types.has(feature.type)) ? features.filter(feature => types.has(feature.type)) : features.filter(feature => feature.type === 'gene');
@@ -149,7 +150,7 @@ function mitoView(sample) {
     mito.annotation.warnings.forEach(message => host.append(el('p', {class: 'note warning'}, message)));
   }
   const supported = mito.target_status === 'confirmed_target';
-  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'COI / BOLD target check'), el('p', {}, supported ? 'Supported at the requested taxon' : human(mito.target_status)), sample.expected_taxon ? el('em', {}, sample.expected_taxon) : null, el('small', {}, 'This checks the supplied identity. It is not an independent deepest-rank taxonomic prediction.')),
+  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'COI / BOLD target check'), el('p', {}, supported ? 'Supported at the requested taxon' : human(mito.target_status)), sample.expected_taxon ? el('em', {}, sample.expected_taxon) : null, mito.target_reason ? el('small',{},mito.target_reason) : null, el('small', {}, 'This checks the supplied identity. It is not an independent deepest-rank taxonomic prediction.')),
     el('div', {}, el('h4', {}, 'Sequence interpretation'), el('p', {}, mito.accepted ? 'Accepted under this run’s policy' : mito.sequence ? 'Candidate retained for review' : 'No sequence recovered'), el('small', {}, 'Circularity, reference-gene recovery and COI agreement are separate evidence. They do not establish every tRNA or exclude every chimera.'))));
   root.append(el('div', {class: 'file-line'}, link(mito.sequence, mito.accepted ? 'Download accepted FASTA ↓' : 'Download candidate FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
   if (mito.annotation.features.length) root.append(details(`Annotation table · ${mito.annotation.features.length} feature records`, table(['Gene / feature', 'Type', 'Start', 'End', 'Strand', 'Product'], mito.annotation.features.map(feature => [feature.gene, feature.type, fmt(feature.start), fmt(feature.end), feature.strand, feature.product]))));
@@ -159,6 +160,7 @@ function mitoView(sample) {
 }
 function itsView(sample) {
   const its = sample.its, root = document.createDocumentFragment();
+  root.append(el('p',{class:'note'},`ITSME execution: ${human(its.run_status)}${exists(its.partial_count)?' · '+fmt(its.partial_count)+' partial loci':''}${its.diagnostic_reason?' · '+its.diagnostic_reason:''}`));
   const index = Math.min(state.locus, Math.max(0, its.loci.length-1)), locus = its.loci[index];
   root.append(metrics([
     ['Reported complete loci', fmt(its.count), '', human(its.status)],
@@ -199,6 +201,9 @@ function numberTime(value) {const n = Number(value); return !exists(value) || !N
 function renderView() {
   const sample = report.samples[state.sample];
   $('view').replaceChildren(state.branch === 'mito' ? mitoView(sample) : state.branch === 'its' ? itsView(sample) : runView(sample));
+  const badge=$('sample-status');
+  badge.textContent=state.branch==='its'?'ITSME · '+human(sample.its.run_status):state.branch==='mito'?'Mito recovery · '+human(sample.status):'Run · '+human(sample.status);
+  badge.className='status '+(state.branch==='its'?(sample.its.run_status==='completed'?'':['failed','timeout'].includes(sample.its.run_status)?'fail':'warn'):sample.status.includes('failed')?'fail':sample.mito.accepted?'':'warn');
   if (sample.warnings.length) $('view').prepend(el('p', {class: 'note warning'}, sample.warnings.join(' ')));
   document.querySelectorAll('[data-branch]').forEach(button => {if (button.dataset.branch === state.branch) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');});
 }

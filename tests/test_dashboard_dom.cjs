@@ -45,6 +45,8 @@ input.value = 'Geodia'; input.dispatchEvent(new dom.window.Event('input'));
 assert.equal(document.querySelectorAll('.sample-row').length, 1);
 click('.sample-row'); click('[data-branch="its"]');
 assert(text().includes('No complete ITS locus reported'));
+assert(document.querySelector('#sample-status').textContent.includes('ITSME · completed'));
+assert(!document.querySelector('#sample-status').classList.contains('fail'));
 click('[data-branch="mito"]');
 assert(text().includes('No annotation map available'));
 assert(!text().includes('null'));

@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -393,17 +393,28 @@ def qualifying_genes(rows, min_identity, min_coverage):
 def bold_decision(rows, metadata, target, identity, coverage, min_bp, near_fraction, max_hits):
     good = [r for r in rows if float(r["pident"]) >= identity and int(r["length"]) >= min_bp
             and int(r["length"])/min(int(r["qlen"]), int(r["slen"])) >= coverage]
+    by_subject = {}
+    for row in rows:
+        by_subject[row["sseqid"]] = max(by_subject.get(row["sseqid"],0),float(row["bitscore"]))
+    details={"returned_subjects":len(by_subject),"search_limit":max_hits,
+             "hit_limit_reached":len(by_subject)>=max_hits}
     if not good:
-        return {"status": "unresolved", "reason": "No qualifying BOLD COI alignment", "hits": []}
+        return {"status":"unresolved","reason":"No qualifying BOLD COI alignment",
+                "reason_code":"no_qualifying_alignment","hits":[],**details}
     best = max(float(r["bitscore"]) for r in good)
-    near = [r for r in good if float(r["bitscore"]) >= best*(1-near_fraction)]
-    subjects = set(r["sseqid"] for r in rows)
+    cutoff = best*(1-near_fraction)
+    near = [r for r in good if float(r["bitscore"]) >= cutoff]
+    # A full result page is not automatically ambiguous. Only a score boundary
+    # still inside the near-best window can conceal additional near-best taxa.
+    boundary = min(by_subject.values())
+    details.update(near_best_cutoff=cutoff,boundary_bitscore=boundary,
+                   near_best_truncated=details["hit_limit_reached"] and boundary>=cutoff)
     if any(float(r["bitscore"]) > best and r not in good for r in rows):
-        status, reason = "unresolved", "A higher-scoring BOLD alignment fails quality gates"
-    elif len(subjects) >= max_hits:
-        status, reason = "unresolved", "BOLD hit ceiling reached; increase --bold-max-hits"
+        status, reason, code = "unresolved", "A higher-scoring BOLD alignment fails quality gates", "higher_hit_fails_quality"
+    elif details["near_best_truncated"]:
+        status, reason, code = "unresolved", "BOLD near-best score window reaches the search limit", "near_best_truncated"
     elif any(r["sseqid"] not in metadata for r in near):
-        status, reason = "unresolved", "Missing BOLD record metadata"
+        status, reason, code = "unresolved", "Missing BOLD record metadata", "missing_metadata"
     else:
         matches = []
         for r in near:
@@ -411,13 +422,45 @@ def bold_decision(rows, metadata, target, identity, coverage, min_bp, near_fract
             tokens = {t.strip().casefold() for t in (m["lineage"] + ";" + m["taxon"]).split(";")}
             matches.append(target.casefold() in tokens)
         if all(matches):
-            status, reason = "confirmed_target", "All near-best qualifying BOLD records match requested taxon"
+            status, reason, code = "confirmed_target", "All near-best qualifying BOLD records match requested taxon", "target_agreement"
         elif any(matches):
-            status, reason = "unresolved", "Near-best BOLD records conflict at requested taxon"
+            status, reason, code = "unresolved", "Near-best BOLD records conflict at requested taxon", "taxon_conflict"
         else:
-            status, reason = "non_target", "No near-best qualifying BOLD record matches requested taxon"
+            status, reason, code = "non_target", "No near-best qualifying BOLD record matches requested taxon", "non_target"
     hits = [dict(r, metadata=metadata.get(r["sseqid"], {})) for r in near]
-    return {"status": status, "reason": reason, "requested_taxon": target, "hits": hits}
+    return {"status":status,"reason":reason,"reason_code":code,"requested_taxon":target,"hits":hits,**details}
+
+
+def screen_bold(runner, stage, query, bold_db, folder, metadata, target, args):
+    """Expand only an unfinished near-best score window; preserve ambiguity at the hard cap."""
+    limit=args.bold_max_hits
+    maximum=getattr(args,"bold_search_max_hits",50000)
+    attempts=[]
+    while True:
+        output=folder/f"bold_hits_{limit}.tsv"
+        name=stage if not attempts else stage+f"_expand_{limit}"
+        ok=runner.run(name,"blastn",["-query",query,"-db",bold_db,"-task","blastn",
+                      "-evalue","1e-20","-max_target_seqs",limit,"-num_threads",args.threads,
+                      "-outfmt","6 "+BLAST_FIELDS,"-out",output],folder,
+                      args.validation_timeout*60,[output])
+        if not ok:
+            decision={"status":"unresolved","reason":"COI/BOLD search failed",
+                      "reason_code":"search_failed","hits":[],"validation_error":"COI/BOLD screening failed"}
+            break
+        decision=bold_decision(blast_rows(output),metadata,target,args.coi_identity,args.coi_coverage,
+                               args.coi_min_bp,args.bold_near_fraction,limit)
+        attempts.append({"limit":limit,"returned_subjects":decision["returned_subjects"],
+                         "reason_code":decision["reason_code"]})
+        shutil.copyfile(output,folder/"bold_hits.tsv")
+        if decision["reason_code"]!="near_best_truncated" or limit>=maximum:
+            break
+        limit=min(maximum,limit*10)
+    decision["search_attempts"]=attempts
+    decision["maximum_search_limit"]=maximum
+    if decision.get("reason_code")=="near_best_truncated":
+        decision["reason"]+="; near-best evidence remains incomplete at --bold-search-max-hits"
+    atomic_json(folder/"bold_evidence.json",decision)
+    return decision
 
 
 def terminal_overlap(seq, minimum=100, maximum=2000):
@@ -615,17 +658,12 @@ def assess_candidate(sequence, description, filename, method, sample, refs, runn
     if not refs["genbank"]:
         result.update(gene_screen_available=False,genes_found=[],rrnas_found=[],missing_genes=[],missing_rrnas=[],
                       reference_gb="",mt_code=sample.mt_code)
-        if runner.run(folder.name+"_bold","blastn",
-                      ["-query",folder/"sequence.fasta","-db",bold_db,"-task","blastn","-evalue","1e-20",
-                       "-max_target_seqs",args.bold_max_hits,"-num_threads",args.threads,
-                       "-outfmt","6 "+BLAST_FIELDS,"-out",folder/"bold_hits.tsv"],folder,
-                      args.validation_timeout*60,[folder/"bold_hits.tsv"]):
-            decision=bold_decision(blast_rows(folder/"bold_hits.tsv"),metadata,sample.target_taxon,
-                                   args.coi_identity,args.coi_coverage,args.coi_min_bp,args.bold_near_fraction,args.bold_max_hits)
-            result["target_status"]=decision["status"]
-            atomic_json(folder/"bold_evidence.json",decision)
-        else:
-            result["validation_error"]="COI/BOLD screening failed"
+        decision=screen_bold(runner,folder.name+"_bold",folder/"sequence.fasta",bold_db,
+                             folder,metadata,sample.target_taxon,args)
+        result["target_status"]=decision["status"]
+        result["target_reason"]=decision["reason"]
+        if decision.get("validation_error"):
+            result["validation_error"]=decision["validation_error"]
         apply_acceptance(result,args)
         atomic_json(folder/"assessment.json",result)
         return result
@@ -663,17 +701,14 @@ def assess_candidate(sequence, description, filename, method, sample, refs, runn
         if start > end:
             coi = str(Seq(coi).reverse_complement())
         fasta_write(folder/"coi.fasta", "COI", coi)
-        if runner.run(folder.name+"_bold", "blastn",
-                      ["-query", folder/"coi.fasta", "-db", bold_db, "-task", "blastn",
-                       "-evalue", "1e-20", "-max_target_seqs", args.bold_max_hits,
-                       "-num_threads", args.threads, "-outfmt", "6 "+BLAST_FIELDS,
-                       "-out", folder/"bold_hits.tsv"], folder, args.validation_timeout*60,
-                      [folder/"bold_hits.tsv"]):
-            decision = bold_decision(blast_rows(folder/"bold_hits.tsv"), metadata,
-                                     sample.target_taxon, args.coi_identity, args.coi_coverage,
-                                     args.coi_min_bp, args.bold_near_fraction, args.bold_max_hits)
-            result["target_status"] = decision["status"]
-            atomic_json(folder/"bold_evidence.json", decision)
+        decision=screen_bold(runner,folder.name+"_bold",folder/"coi.fasta",bold_db,
+                             folder,metadata,sample.target_taxon,args)
+        result["target_status"]=decision["status"]
+        result["target_reason"]=decision["reason"]
+        if decision.get("validation_error"):
+            result["validation_error"]=decision["validation_error"]
+    else:
+        result["target_reason"]="COX1 homology query unavailable"
     apply_acceptance(result,args)
     atomic_json(folder/"assessment.json", result)
     return result
@@ -787,6 +822,48 @@ def load_bold_metadata(path):
     return rows
 
 
+def annotate_mito_candidate(candidate, mt_code, root, runner, args, stage="mitos2"):
+    """Annotation is an assessment, independent of biological acceptance."""
+    final=Path(root)/"MitoLooper"
+    final.mkdir(exist_ok=True)
+    report={"ok":None,"status":"not_run","candidate_id":candidate.get("candidate_id",""),
+            "scope":"accepted_candidate" if candidate.get("accepted") else "exploratory_candidate",
+            "directory":"","input_fasta":"","input_sha256":""}
+    policy=getattr(args,"annotation_policy","best")
+    if policy=="none" or (policy=="accepted" and not candidate.get("accepted")):
+        reason="Annotation disabled" if policy=="none" else "--annotation-policy accepted; candidate not accepted"
+        runner.skip(stage,reason)
+        return {**report,"status":"disabled" if policy=="none" else "skipped_not_accepted","reason":reason}
+    if mt_code is None:
+        reason="Genetic code unavailable; supply mt_code to annotate without guessing"
+        runner.skip(stage,reason)
+        return {**report,"status":"skipped_unknown_code","reason":reason}
+    annotation_input=final/"annotation_input.fasta"
+    source=Path(candidate["fasta"])
+    if annotation_input.is_symlink():
+        raise ValueError("Refusing linked annotation input output")
+    if source.resolve()!=annotation_input.resolve():
+        shutil.copyfile(source,annotation_input)
+    report.update(input_fasta=str(annotation_input),input_sha256=digest_file(annotation_input))
+    work=attempt_dir(root,runner,stage,Path(root)/"05_mitos2")
+    opts=["-i",annotation_input,"-c",mt_code,"--refdir",args.mitos_refdir,"-r",args.mitos_refseqver,"-o",work/"output"]
+    if not candidate.get("circular"):
+        opts.append("--linear")
+    ok=runner.run(stage,"mitos2",opts,work,args.annotation_timeout*60,[work/"output/result.gff"])
+    if ok and not args.dry_run:
+        annotations=summarize_annotation(work/"output/result.gff")
+        annotations.update(candidate_id=report["candidate_id"],scope=report["scope"],mt_code=mt_code,
+                           reference_release=args.mitos_refseqver,
+                           input_sha256=report["input_sha256"],input_fasta=str(annotation_input),
+                           topology="circular" if candidate.get("circular") else "unclosed_or_linear")
+        atomic_json(final/"annotation_summary.json",annotations)
+        if not annotations["feature_counts"]:
+            ok=False
+            runner.events.append({"stage":"annotation_validation","status":"failed","reason":"MITOS2 GFF has no features"})
+    return {**report,"ok":ok,"status":"planned" if args.dry_run else "completed" if ok else "failed",
+            "directory":str(work/"output")}
+
+
 def process_sample(sample, args, commands, metadata, bold_db):
     from Bio import SeqIO
     root = args.outdir/sample.sample
@@ -836,32 +913,18 @@ def process_sample(sample, args, commands, metadata, bold_db):
             (final/name).unlink(missing_ok=True)
     annotation_ok = None
     mitos = None
+    annotation = {"status":"not_run","scope":"","candidate_id":""}
 
-    def annotate_winner():
-        nonlocal annotation_ok, mitos
-        accepted_path=final/"accepted_candidate.fasta"
-        shutil.copyfile(winner["fasta"],accepted_path)
-        if winner["strict_complete_candidate"]:
-            shutil.copyfile(winner["fasta"],final/"circular_target_candidate.fasta")
-        if sample.mt_code is None:
-            runner.skip("mitos2","Genetic code unavailable; supply mt_code to annotate without guessing")
-            return
-        mitos = attempt_dir(root,runner,"mitos2",root/"05_mitos2")
-        annotation_args=["-i",accepted_path,"-c",sample.mt_code,
-                         "--refdir",args.mitos_refdir,"-r",args.mitos_refseqver,
-                         "-o",mitos/"output"]
-        if not winner["circular"]:
-            annotation_args.append("--linear")
-        annotation_ok = runner.run("mitos2","mitos2",
-                          annotation_args,mitos,args.annotation_timeout*60,
-                          [mitos/"output/result.gff"])
-        if annotation_ok:
-            report = summarize_annotation(mitos/"output/result.gff")
-            atomic_json(final/"annotation_summary.json",report)
-            if not report["feature_counts"]:
-                annotation_ok = False
-                runner.events.append({"stage":"annotation_validation","status":"failed",
-                                      "reason":"MITOS2 GFF has no features"})
+    def annotate_selected(candidate):
+        nonlocal annotation_ok, mitos, annotation
+        if candidate.get("accepted"):
+            shutil.copyfile(candidate["fasta"],final/"accepted_candidate.fasta")
+            if candidate.get("strict_complete_candidate"):
+                shutil.copyfile(candidate["fasta"],final/"circular_target_candidate.fasta")
+        annotation=annotate_mito_candidate(candidate,sample.mt_code,root,runner,args)
+        annotation_ok=annotation["ok"]
+        if annotation["directory"]:
+            mitos=Path(annotation["directory"]).parent
 
     def recover(method, number, graph=None, contigs=None):
         nonlocal winner, refs
@@ -929,7 +992,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
         else:
             recover(method, f"01{i}")
     if winner:
-        annotate_winner()
+        annotate_selected(winner)
 
     # Nuclear rDNA remains a distinct optional branch and never gates mito recovery.
     itsme_ok = None
@@ -984,12 +1047,14 @@ def process_sample(sample, args, commands, metadata, bold_db):
     best = winner or (max(candidates, key=score_candidate) if candidates else None)
     if best:
         shutil.copyfile(best["fasta"], final/"best_sequence.fasta")
-    if winner and annotation_ok is None:
-        annotate_winner()
-    elif not winner:
-        runner.skip("mitos2", "No candidate met configured acceptance policy and target gates")
+    if best and annotation.get("candidate_id")!=best["candidate_id"]:
+        annotate_selected(best)
+    elif not best:
+        runner.skip("mitos2", "No mitochondrial candidate available for annotation")
+        annotation["status"]="skipped_no_candidate"
     strict_winner=bool(winner and winner["strict_complete_candidate"])
-    status = ("recovered_annotated" if strict_winner and annotation_ok else
+    status = ("accepted_annotation_disabled" if winner and annotation["status"]=="disabled" else
+              "recovered_annotated" if strict_winner and annotation_ok else
               "accepted_by_policy_annotation_unavailable" if winner and sample.mt_code is None else
               "recovered_annotation_failed" if strict_winner else
               "accepted_by_policy_annotated" if winner and annotation_ok else
@@ -1006,9 +1071,12 @@ def process_sample(sample, args, commands, metadata, bold_db):
                "complete_by_reference":bool(best and best["complete_by_reference"]),
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
                "annotation_ok": annotation_ok, "annotation_dir": str(mitos/"output") if mitos else "",
+               "annotation_status":annotation["status"],"annotation_scope":annotation["scope"],
+               "annotation_candidate_id":annotation["candidate_id"],
                "best_method": best["method"] if best else "", "best_length_bp": best["length_bp"] if best else 0,
                "circular": best["circular"] if best else False,
                "target_status": best["target_status"] if best else "unresolved",
+               "target_reason":best.get("target_reason","") if best else "No mitochondrial candidate",
                "genes_recovered": len(best.get("genes_found",[]))+len(best.get("rrnas_found",[])) if best else 0,
                "genes_expected": len(refs["required_proteins"])+len(refs["required_rrnas"]) if refs["genbank"] else None,
                "gene_screen_available":bool(refs["genbank"]),
@@ -1105,7 +1173,11 @@ def parser(require_pipeline=False):
     p.add_argument("--coi-coverage", type=float, default=.8, help="Aligned fraction of shorter COI/barcode sequence")
     p.add_argument("--coi-min-bp", type=int, default=400)
     p.add_argument("--bold-near-fraction", type=float, default=.02)
-    p.add_argument("--bold-max-hits", type=int, default=500)
+    p.add_argument("--bold-max-hits", type=int, default=500,help="Initial BOLD search subject limit")
+    p.add_argument("--bold-search-max-hits",type=int,default=50000,
+                   help="Hard limit for adaptive expansion when near-best BOLD scores remain truncated")
+    p.add_argument("--annotation-policy",choices=["best","accepted","none"],default="best",
+                   help="Annotate the best retained candidate by default, independent of circularity/identity/acceptance")
     p.add_argument("--min-junction-templates", type=int, default=3)
     return p
 
@@ -1341,6 +1413,8 @@ def main(argv=None,require_pipeline=False):
     if args.threads < 1 or args.memory < 1 or not 0 < args.assembly_percent <= 100:
         raise ValueError("Invalid threads, memory or assembly percentage")
     validate_acceptance_options(args)
+    if args.bold_max_hits<1 or args.bold_search_max_hits<args.bold_max_hits:
+        raise ValueError("BOLD limits require 1 <= --bold-max-hits <= --bold-search-max-hits")
     if any(getattr(args,k) <= 0 for k in ["method_timeout","assembly_timeout","annotation_timeout","validation_timeout","itsme_timeout"]):
         raise ValueError("Timeouts must be positive")
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
@@ -1484,7 +1558,7 @@ def main(argv=None,require_pipeline=False):
                     ["sample","pipeline","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
                      "circular","target_status","genes_recovered","genes_expected","candidate_count",
                      "accepted_by_policy","strict_complete_candidate","complete_by_reference","acceptance_policy",
-                     "itsme_ok","itsme_output","final_directory","wgs_ok","annotation_ok","failed_stages","error","cleanup_error",*ITS_FIELDS],",")
+                     "itsme_ok","itsme_output","final_directory","wgs_ok","annotation_ok","annotation_status","annotation_scope","target_reason","failed_stages","error","cleanup_error",*ITS_FIELDS],",")
         gene_rows = []
         for name, row in previous.items():
             path = args.outdir/name/"final/gene_recovery.csv"
