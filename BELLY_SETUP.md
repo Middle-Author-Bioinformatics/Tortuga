@@ -7,26 +7,34 @@ For the new unified entry point, use `pipeline_controller.sh` with
 Use the existing installations. No environment creation, manual activation, or
 config-generation step is needed for normal execution.
 
+For a new installation, follow **[Download and prepare the databases](DATABASES.md)**
+before running. It includes download sources, preparation commands and the exact
+resource paths used below. Skip steps for databases already prepared on TheBelly.
+
 ## Run
 
-After extracting the package to `~/bin/MitoGenomeScanner`, run from `base`:
+From the cloned Tortuga repository, run from `base`:
 
 ```bash
-cd ~/bin/MitoGenomeScanner
-
-bash mito_looper.sh ~/NOAA/CA_intertidal/raw_reads \
-    --samples samples.tsv \
-    --bold-fasta /PATH/TO/bold/coi.fasta \
-    --bold-metadata /PATH/TO/bold/metadata.tsv \
-    --mitos-refdir /PATH/TO/mitos_data \
+bash /home/ark/MAB/bin/Tortuga/pipeline_controller.sh \
+    --pipeline both \
+    -i /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
+    --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
+    --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
+    --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
+    --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
+    --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
     --mitos-refseqver refseq89m \
-    --branch mito --only-sample W30877 \
-    -o ~/NOAA/CA_intertidal/mito_results \
-    -t 60 -m 200
+    --itsme-db /home/ark/databases/itsme_db \
+    --sensitivity 2 \
+    --only-sample W30877 \
+    -o /home/ark/MAB/NOAA/CA_intertidal/both_results_new \
+    -t 32 -m 200
 ```
 
-Replace capitalized reference paths with actual locations and use your installed
-MITOS2 release name. After checking the first sample, remove `--only-sample W30877`
+Change `--pipeline both` to `--pipeline mitolooper` for mitochondria only, or
+`--pipeline itsme` for nuclear rDNA only. The mitochondrial and ITSME paths shown
+match the current Belly setup. After checking the first sample, remove `--only-sample W30877`
 and add `--resume` to run the remaining samples sequentially. The controller already
 loops over the input directory.
 
@@ -52,7 +60,7 @@ without changing the user's parent shell.
 | mtGrasp | `mito-mtgrasp` | `mtgrasp` |
 | MITOS2 | `mito-mitos2` | `mitos2` if subsequently present |
 | Optional MEGAHIT | `mito-megahit` | `itsme` if subsequently present |
-| Optional nuclear rDNA | `itsme` | Calls `~/bin/ITSME/itsme.v2.sh` |
+| Optional nuclear rDNA | `itsme` | Calls `/home/ark/MAB/bin/ITSME/itsme.v2.sh` |
 
 The source comments beside `SPECS` in `configure_belly.py` note the alternatives;
 the launcher also has comments for the main duplicates. The first environment
@@ -83,14 +91,15 @@ cp examples/CA_intertidal_samples.tsv samples.tsv
 ```
 
 Fill `target_taxon` for each sample. Leave `reference_gb` blank to select from
-`~/NOAA/mitos_genbank` automatically, or set `--genbank-dir` to another collection.
+`/home/ark/MAB/NOAA/mitos_genbank` automatically, or set `--genbank-dir` to another collection.
 Leave `mt_code` blank to infer it when matching GenBank CDS annotations agree on
 one explicit code; fill it when the controller reports missing/conflicting codes.
 The optional `seed_fasta` may remain blank: COX1 from the selected GenBank reference
 supplies the initial seed. Multiple samples can share a suitable reference.
 Retain the full kingdom-to-species hierarchy from source metadata. The default
-selector uses the target, genus, then family; broader supplied ranks can be used
-with `--reference-min-rank order`, `class`, or `phylum`. Selection reports the
+selector uses the target, genus, family, order, class, phylum, then kingdom,
+stopping at the first eligible match. `--reference-min-rank` can restrict how far
+it searches. Selection reports the
 actual matching rank and keeps the expected BOLD target unchanged.
 
 | Resource | Requirement |
@@ -102,9 +111,10 @@ actual matching rank and keeps the expected BOLD target unchanged.
 | ITSME references, full branch only | `/home/ark/databases/itsme_db`, already shown in your server output. |
 
 The rRNA resources `itsme2_db` and `itsme2_silva138_2` do not replace the
-mitochondrial GenBank reference, BOLD library, or MITOS2 models. `prepare_bold.py`
-normalizes supported public BOLD TSV exports; see README. MITOS2 reference downloads
-are provided at https://zenodo.org/records/4284483; reuse existing copies if present.
+mitochondrial GenBank reference, BOLD library, or MITOS2 models. Follow
+[DATABASES.md](DATABASES.md) for downloading/extracting MITOS models, preparing
+single-record GenBank references, downloading the correct BOLD TSV and producing
+matching COI FASTA/taxonomy files. Reuse existing prepared copies if present.
 
 For the optional nuclear rDNA step, use `--branch full` with
 `--itsme-db /home/ark/databases/itsme_db`. ITSME's own process must be able to find
@@ -128,3 +138,4 @@ Use a new output directory for a run started with an older pipeline version;
 changed version/environment settings are not silently treated as equivalent
 checkpoints. Tests exercise orchestration with synthetic tools, not actual
 assembler recovery on the project data.
+

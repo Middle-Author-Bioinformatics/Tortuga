@@ -1,5 +1,10 @@
 # Unreleased
 
+- Add a database installation guide with download/preparation commands for ITSME,
+  GetOrganelle animal_mt, MITOS refseq89m (including its checksum), annotated NCBI
+  mitochondrial GenBank records and BOLD COI/taxonomy. Link it from installation
+  instructions and update Belly paths and hierarchy defaults.
+
 - Restore observed COI reference names when older evidence lacks scores or the
   confirmation filter retained no hits. Read saved alignments and selectively
   resolve names from the configured BOLD metadata in one streaming pass; add a
