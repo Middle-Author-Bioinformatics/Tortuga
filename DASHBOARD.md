@@ -18,7 +18,9 @@ of metric cards. It has three views:
   complete-locus table and sequence downloads. Multiple loci stay separate.
 - **Run record:** available fastp read/base-quality metrics, individual stage
   outcomes and durations, retained logs, and the saved sample summary. Timeouts
-  remain visible even if another method recovered a sequence.
+  remain visible even if another method recovered a sequence. Click a failed or
+  timed-out status to download its native log; a status stays plain text when
+  no log was retained. Log links survive moving the entire result directory.
 
 A display switch in each assembly view opens the retained assembly graph with
 pan/zoom, file selection, segment lengths/coverage and original graph downloads.
@@ -66,6 +68,16 @@ cohort summary. In the ITS view, the badge reports **ITSME execution**, independ
 of the overall mitochondrial outcome; complete/partial locus counts remain
 separate. A successfully completed ITSME run with no complete loci is not a
 program failure.
+
+The main views show the measurements and maps without explanatory captions.
+**Taxonomic evidence** holds the target-check status, its recorded reason,
+annotation scope and supporting BOLD records. When target confirmation is still
+unresolved, the main taxon label shows **Top COI reference match**, using the
+highest-scoring retained qualifying BOLD records (including tied names). It never
+substitutes the expected name. Confirmed checks show **COI-supported identity**.
+A matching reference name can coexist with an unresolved check because other
+near-best hits, missing metadata or a truncated search can prevent confirmation.
+Building the dashboard preserves the saved decision; it does not rerun BOLD.
 
 ## How to interpret the views
 

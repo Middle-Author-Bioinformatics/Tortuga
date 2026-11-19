@@ -113,3 +113,8 @@ Version 2.3.1 reproduces the reported native MITOS precondition by making the
 CLI double reject missing -o directories. Circular and unclosed regression cases
 fail before the patch and pass once the shared launcher creates the directory.
 The existing saved-output tests exercise the same shared launcher and retry path.
+
+Dashboard refinement tests cover failed/timed-out log downloads, missing logs,
+relocated absolute log paths, sample confinement, score-ranked/tied COI reference
+names and preservation of unresolved target decisions despite matching names.
+DOM checks verify concise main views and collapsed status/reason evidence.

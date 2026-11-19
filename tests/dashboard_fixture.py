@@ -29,7 +29,7 @@ def make_demo(root, samples=8):
                   'target_taxon': taxon, 'itsme_ok': True, 'best_length_bp': length, 'circular': accepted,
                   'genes_recovered': 15 if accepted else 9, 'genes_expected': 15, 'complete_by_reference': accepted,
                   'best_method': 'novoplasty' if accepted else 'getorganelle', 'winning_method': 'novoplasty' if accepted else '',
-                  'target_status': 'confirmed_target', 'annotation_ok': accepted,
+                  'target_status': 'unresolved' if index == 6 else 'confirmed_target', 'annotation_ok': accepted,
                   'best_candidate': {'candidate_id': '011_novoplasty_001'}}
         atomic_json(sample/'final/summary.json', result)
         seq = 'ACGT'*(length//4)+'A'*(length%4)
@@ -79,15 +79,19 @@ def make_demo(root, samples=8):
         table(sample/'ITSME/master_summary.csv', rows, columns, ',')
         table(sample/'ITSME/taxonomy_validation.tsv', tax_rows, ['contig','consensus_genus','consensus_species'])
         put(sample/'ITSME/reported_loci.fasta', ''.join('>'+row['contig']+'\n'+'ACGT'*1800+'\n' for row in rows))
-        atomic_json(sample/'candidates/011_novoplasty_001/bold_evidence.json', {'status': 'confirmed_target', 'hits': [
-            {'pident': '99.3', 'length': '648', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
+        atomic_json(sample/'candidates/011_novoplasty_001/bold_evidence.json', {
+            'status': result['target_status'],
+            'reason': 'BOLD near-best score window reaches the search limit' if index == 6 else 'All near-best qualifying BOLD records match requested taxon',
+            'hits': [{'bitscore': '1200', 'pident': '99.3', 'length': '648', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
         stages = [{'stage': step, 'status': status, 'elapsed_seconds': secs, 'reason': reason} for step, status, secs, reason in [
             ('qc','ok',182,''), ('novoplasty','ok',740,''), ('getorganelle','skipped',0,'Candidate already met acceptance policy'),
-            ('itsme','ok',1840,''), ('wgs','timeout',7200,'Stopped at the configured wall-clock limit'), ('mitos2','ok' if accepted else 'skipped',215,'')]]
+            ('itsme','ok',1840,''), ('wgs','timeout',7200,'Stopped at the configured wall-clock limit'), ('mtgrasp','failed',12,''), ('mitos2','ok' if accepted else 'skipped',215,'')]]
         table(sample/'stages.tsv', stages, ['stage','status','elapsed_seconds','reason'])
         atomic_json(sample/'qc/fastp.json', {'summary': {'before_filtering': {'total_reads': 82304166, 'q30_rate': .93},
                                                         'after_filtering': {'total_reads': 79421224, 'q30_rate': .962}}})
         put(sample/'logs/wgs.log', 'Illustrative timeout log; no assembly run was executed.\n')
+        if index == 0:
+            put(sample/'logs/mtgrasp.log', 'Illustrative failed stage log.\n')
         results.append(result)
     table(root/'cohort_summary.csv', results, ['sample','status','target_taxon','best_length_bp'], ',')
     atomic_json(root/'last_invocation.json', {'results': results})

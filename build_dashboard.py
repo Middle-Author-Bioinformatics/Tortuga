@@ -64,6 +64,21 @@ def first(paths, root):
     return next((path for path in paths if inside(path, root)), None)
 
 
+def stage_log(stage, sample, root):
+    """Resolve native logs, including absolute paths saved before a folder move."""
+    recorded = Path(stage['log']) if stage.get('log') else None
+    candidates = []
+    if recorded:
+        if '..' in recorded.parts or (recorded.is_absolute() and recorded.exists() and not inside(recorded, sample)):
+            return None
+        candidates.extend([recorded] if recorded.is_absolute() else [sample/recorded, root/recorded])
+        candidates.append(sample/'logs'/recorded.name)
+    name = stage.get('stage', '')
+    if name and Path(name).name == name and name not in {'.', '..'}:
+        candidates.append(sample/'logs'/(name+'.log'))
+    return relative_file(next((path for path in candidates if inside(path, sample)), None), root)
+
+
 def choose_product(sample, branch, name, root):
     prefix = 'itsme_' if branch == 'ITSME' else ''
     return first([sample/branch/name, sample/'final'/(prefix+name)], root)
@@ -279,7 +294,15 @@ def collect_sample(sample, root):
         if inside(candidate_dir/'bold_evidence.json', root):
             evidence = read_json(candidate_dir/'bold_evidence.json', warnings)
     hits = []
-    for hit in evidence.get('hits', [])[:12]:
+    evidence_hits = sorted(evidence.get('hits', []),
+                           key=lambda hit: number(hit.get('bitscore')) or 0, reverse=True)
+    top_score = number(evidence_hits[0].get('bitscore')) if evidence_hits else None
+    # Display observed reference names, never substitute the expected identity.
+    # Without scores, older evidence can supply the table but no claimed top hit.
+    reference_taxa = sorted({hit.get('metadata', {}).get('taxon', '') for hit in evidence_hits
+                             if top_score is not None and number(hit.get('bitscore')) == top_score}
+                            - {''})
+    for hit in evidence_hits[:12]:
         meta = hit.get('metadata', {})
         hits.append({'taxon': meta.get('taxon', ''), 'lineage': meta.get('lineage', ''),
                      'identity': number(hit.get('pident')), 'aligned_bp': number(hit.get('length')),
@@ -306,6 +329,7 @@ def collect_sample(sample, root):
                 'complete_by_reference': summary.get('complete_by_reference'), 'target_status': summary.get('target_status', 'unresolved'),
                 'annotation_ok': summary.get('annotation_ok'), 'annotation_status': summary.get('annotation_status',''),
                 'annotation_scope':summary.get('annotation_scope',''), 'target_reason':summary.get('target_reason') or evidence.get('reason',''), 'annotation': gene_data, 'hits': hits,
+                'reference_taxa': reference_taxa, 'hit_count': len(evidence_hits),
                 'evidence_file': relative_file(sample/'candidates'/candidate_id/'bold_evidence.json', root) if candidate_id else None,
                 'files': mito_files, 'graphs': graphs['MitoLooper']},
             'its': {'status': cells.get('itsme_reporting_status'), 'run_status':cells.get('itsme_run_status'),
@@ -316,7 +340,8 @@ def collect_sample(sample, root):
             'qc': {'reads_before': before.get('total_reads'), 'reads_after': after.get('total_reads'),
                    'q30_before': before.get('q30_rate'), 'q30_after': after.get('q30_rate'),
                    'report': relative_file(first([sample/'qc/fastp.html', sample/'ITSME/fastp.html'], root), root)},
-            'stages': [{key: stage.get(key, '') for key in ['stage', 'status', 'reason', 'elapsed_seconds']} for stage in stages],
+            'stages': [dict({key: stage.get(key, '') for key in ['stage', 'status', 'reason', 'elapsed_seconds']},
+                            log=stage_log(stage, sample, root)) for stage in stages],
             'logs': logs}
     checkpoint = sample/'run_config.json'
     if summary_path and checkpoint.is_file() and checkpoint.stat().st_mtime_ns > summary_path.stat().st_mtime_ns:
@@ -324,7 +349,7 @@ def collect_sample(sample, root):
         result['warnings'].append('The saved summary predates the latest sample attempt. Old recovery claims are hidden; retained files remain available for inspection.')
         result['mito'].update(length=None, accepted=False, sequence=None, circular=None, method='',
                               genes_recovered=None, genes_expected=None, target_status='unresolved',
-                              complete_by_reference=None, annotation_ok=None, hits=[])
+                              complete_by_reference=None, annotation_ok=None, hits=[], reference_taxa=[], hit_count=0)
         result['mito']['annotation']['features'] = []
         result['its'].update(status='not_run', count=None, loci=[])
     return result
