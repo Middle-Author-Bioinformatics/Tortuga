@@ -108,3 +108,8 @@ hard caps, saved-output annotation/revalidation without assembler/ITSME calls,
 annotation caching, active locks and continued annotation after BOLD failure.
 ITSME tests distinguish successful zero-complete-locus runs, partial counts and
 actual execution timeouts. Native MITOS2 jobs on real Belly data were not run.
+
+Version 2.3.1 reproduces the reported native MITOS precondition by making the
+CLI double reject missing -o directories. Circular and unclosed regression cases
+fail before the patch and pass once the shared launcher creates the directory.
+The existing saved-output tests exercise the same shared launcher and retry path.

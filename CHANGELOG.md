@@ -1,3 +1,13 @@
+# 2.3.1 - 2026-11-19
+
+- Create MITOS's output directory before invoking runmitos.py. Fix the native
+  argument-validation failure "no such directory .../output" in ordinary and
+  existing-candidate annotation, with circular and unclosed inputs.
+- Make the MITOS CLI double require a pre-existing output directory instead of
+  silently creating one, and add a regression case for each topology. Confirm
+  the regressions fail before the fix. Document annotation-only retry without
+  repeating successful BOLD searches or requiring --force.
+
 # 2.3.0 - 2026-11-18
 
 - Annotate the best retained mitochondrial candidate by default, independently of

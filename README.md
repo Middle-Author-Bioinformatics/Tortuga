@@ -1,4 +1,4 @@
-# Tortuga 2.3.0
+# Tortuga 2.3.1
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -100,6 +100,25 @@ from the `mito_workflow` environment: unlisted tools are resolved from its PATH.
 The help probes also save tool help/version text in `tool_checks.json`. An
 installed tool returning nonzero for `-h` needs inspection, even if usable.
 Probe success checks launchability, not database validity or biological performance.
+
+## MITOS output-directory fix (2.3.1)
+
+The MITOS launcher now creates the `-o` directory before starting runmitos.py.
+This fixes `runmitos.py: error: no such directory .../output` in both new runs and
+saved-candidate annotation. For an existing run where BOLD completed but MITOS
+failed, merge the fix, update Tortuga and retry **annotation only**:
+
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+
+bash /home/ark/MAB/bin/Tortuga/annotate_existing.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy
+```
+
+No `--recheck-bold` or `--force` is needed: failed annotations are retried in a
+fresh attempt directory. Assemblies, ITSME and previous BOLD searches are not
+repeated. Failed attempts are retained; successful unchanged annotations remain
+cached. Cohort reports and dashboard are refreshed after annotation.
 
 ## Annotate retained candidates by default (2.3.0)
 

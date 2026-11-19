@@ -160,3 +160,31 @@ def test_force_repeats_annotation_even_when_prior_helper_scratch_was_retained(fi
     assert helper.main([str(fixture['out']),'--force','--keep-intermediates'])==0
     rows=[json.loads(line) for line in fixture['trace'].read_text().splitlines()]
     assert sum(row['tool']=='mitos2' for row in rows)==2
+
+
+@pytest.mark.parametrize('circular',[False,True])
+def test_mitos_output_directory_exists_before_native_tool_launch(fixture,circular):
+    code,events=fixture['run']({'novoplasty':{'complete':True,'circular':circular}},['--no-assembly'])
+    assert code==0 and summary(fixture)['annotation_ok']
+    annotation=next(event for event in events if event['tool']=='mitos2')
+    output=Path(annotation['args'][annotation['args'].index('-o')+1])
+    assert output.is_dir() and (output/'result.gff').is_file()
+    assert ('--linear' in annotation['args']) is (not circular)
+
+
+def test_retry_previous_mitos_failure_uses_fresh_directory_without_repeating_bold(fixture):
+    code,events=fixture['run']({'novoplasty':{'circular':True,'complete':True}},['--no-assembly'],fail=['mitos2'])
+    assert code==1
+    original=fixture['out']/'W30877/05_mitos2/attempt_001'
+    (original/'output').rmdir()  # Reproduce the original missing-directory failure state.
+    scenario_path=fixture['sheet'].parent/'scenario.json'
+    scenario=json.loads(scenario_path.read_text())
+    scenario['fail']=[]
+    scenario_path.write_text(json.dumps(scenario))
+    assert helper.main([str(fixture['out'])])==0
+    trace=[json.loads(line) for line in fixture['trace'].read_text().splitlines()]
+    calls=trace[len(events):]
+    assert [event['tool'] for event in calls]==['mitos2']
+    assert 'attempt_002/output' in calls[0]['args'][calls[0]['args'].index('-o')+1]
+    assert original.is_dir()  # Failed attempts are preserved.
+    assert summary(fixture)['annotation_ok']

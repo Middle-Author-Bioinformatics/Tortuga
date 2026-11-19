@@ -88,6 +88,8 @@ elif tool == "itsme":
         "contig\tconsensus_genus\tconsensus_species\nITS\tTarget\tTarget species\n")
     put(Path(val("-o"))/"final/accepted_R1.fastq.gz","discard recruited reads")
 elif tool == "mitos2":
+    if not Path(val("-o")).is_dir():
+        sys.exit("runmitos.py: error: no such directory " + val("-o"))
     put(Path(val("-o"))/"result.gff","##gff-version 3\ncandidate\tMITOS2\tgene\t1\t600\t.\t+\t.\tName=cox1\n")
 elif tool == "minimap2":
     put(val("-o"),"@SQ\tSN:junction\tLN:1000\n"+"".join(

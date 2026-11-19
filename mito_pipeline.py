@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -846,7 +846,12 @@ def annotate_mito_candidate(candidate, mt_code, root, runner, args, stage="mitos
         shutil.copyfile(source,annotation_input)
     report.update(input_fasta=str(annotation_input),input_sha256=digest_file(annotation_input))
     work=attempt_dir(root,runner,stage,Path(root)/"05_mitos2")
-    opts=["-i",annotation_input,"-c",mt_code,"--refdir",args.mitos_refdir,"-r",args.mitos_refseqver,"-o",work/"output"]
+    # MITOS validates -o before annotation and requires an existing directory.
+    output=work/"output"
+    if output.is_symlink():
+        raise ValueError("Refusing linked MITOS output directory")
+    output.mkdir(parents=True,exist_ok=True)
+    opts=["-i",annotation_input,"-c",mt_code,"--refdir",args.mitos_refdir,"-r",args.mitos_refseqver,"-o",output]
     if not candidate.get("circular"):
         opts.append("--linear")
     ok=runner.run(stage,"mitos2",opts,work,args.annotation_timeout*60,[work/"output/result.gff"])
