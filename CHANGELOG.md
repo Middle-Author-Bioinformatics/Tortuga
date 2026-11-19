@@ -1,7 +1,16 @@
 # Unreleased
 
-- Simplify dashboard captions and metric notes. Keep target-check reasons,
-  acceptance and exploratory annotation scope in collapsed Taxonomic evidence.
+- Restore observed COI reference names when older evidence lacks scores or the
+  confirmation filter retained no hits. Read saved alignments and selectively
+  resolve names from the configured BOLD metadata in one streaming pass; add a
+  --bold-metadata override. Embed names and match metrics without rerunning BOLD
+  or changing confirmation/assembly acceptance.
+- Remove technical warning paragraphs, raw stage reasons and annotation-policy
+  commentary from all dashboard views and expandable panels. Deduplicate feature
+  warnings in the saved display data; retain native reports and failure-log links.
+
+- Simplify dashboard captions and metric notes. Keep technical target-check
+  reasons and exploratory annotation scope in downloadable evidence files.
   Distinguish observed top COI reference names from confirmed target identity;
   do not repeat the expected name as an unresolved prediction.
 - Link failed/timed-out Run record statuses directly to retained native logs.

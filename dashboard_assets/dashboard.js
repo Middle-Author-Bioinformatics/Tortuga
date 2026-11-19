@@ -40,7 +40,7 @@ function sampleList() {
   const query = $('search').value.toLowerCase();
   const list = $('sample-list'); list.replaceChildren();
   report.samples.forEach((sample, index) => {
-    const text = [sample.id, sample.expected_taxon, ...sample.its.loci.map(locus => locus.taxon)].join(' ').toLowerCase();
+    const text = [sample.id, sample.expected_taxon, ...(sample.mito.reference_taxa || []), ...sample.its.loci.map(locus => locus.taxon)].join(' ').toLowerCase();
     if (!text.includes(query)) return;
     const mitoClass = sample.mito.accepted ? 'yes' : sample.mito.sequence ? 'partial' : sample.status === 'failed' ? 'no' : '';
     const itsClass = sample.its.count > 0 ? 'yes' : '';
@@ -93,8 +93,7 @@ function renderGraph(graphs, host) {
   const draw = () => {
     const graph = graphs[Number(select.value)]; plot.replaceChildren();
     [zoomIn, zoomOut, reset].forEach(button => {button.disabled = !graph.nodes.length;});
-    plot.append(el('p', {class: 'subtle'}, graph.scope));
-    if (!graph.nodes.length) {plot.append(empty('Graph preview unavailable', graph.warnings.join(' ')), el('div', {class: 'file-line'}, link(graph.file, 'Download original graph'))); return;}
+    if (!graph.nodes.length) {plot.append(empty('Graph preview unavailable', ''), el('div', {class: 'file-line'}, link(graph.file, 'Download graph'))); return;}
     const drawing = svg('svg', {class: 'graph', viewBox: '0 0 1000 370', role: 'group', 'aria-label': 'Interactive assembly graph. Scroll to zoom, drag to pan, select a segment for details.'});
     const pane = svg('g'); drawing.append(pane);
     const lookup = new Map(graph.nodes.map(node => [node.id, node]));
@@ -124,8 +123,7 @@ function renderGraph(graphs, host) {
     drawing.addEventListener('pointermove', event => {if (!drag) return; const p = point(event); tx += p.x-drag.x; ty += p.y-drag.y; drag = p; transform();});
     drawing.addEventListener('pointerup', () => {drag = null;}); drawing.addEventListener('pointercancel', () => {drag = null;});
     fit();
-    plot.append(drawing, readout, el('div', {class: 'graph-caption'}, el('span', {}, `${fmt(graph.nodes.length)} displayed segments · ${fmt(graph.edges.length)} oriented links${graph.truncated ? ' · bounded preview' : ''}`), link(graph.file, 'Original graph ↗')));
-    graph.warnings.forEach(message => plot.append(el('p', {class: 'note warning'}, message)));
+    plot.append(drawing, readout, el('div', {class: 'graph-caption'}, el('span', {}, `${fmt(graph.nodes.length)}${graph.truncated ? ' / '+fmt(graph.total_nodes) : ''} segments · ${fmt(graph.edges.length)} links`), link(graph.file, 'Download graph')));
   };
   select.addEventListener('change', draw); draw();
 }
@@ -144,31 +142,24 @@ function mitoView(sample) {
     const features = mito.annotation.features;
     const types = new Set(['CDS', 'rRNA', 'tRNA', 'ncRNA']);
     const selected = features.some(feature => types.has(feature.type)) ? features.filter(feature => types.has(feature.type)) : features.filter(feature => feature.type === 'gene');
-    host.append(mito.annotation.multiple_sequences ? empty('Multiple annotation sequences', 'See the annotation table below; features are not overlaid across different contigs.') : mapSequence(mito.length, selected));
-    if (mito.annotation.file && mito.annotation_ok === false) host.append(el('p', {class: 'note warning'}, 'The annotation stage did not complete successfully. These are retained annotation features; inspect the run record.'));
-    mito.annotation.warnings.forEach(message => host.append(el('p', {class: 'note warning'}, message)));
+    host.append(mito.annotation.multiple_sequences ? empty('Multiple annotation sequences', '') : mapSequence(mito.length, selected));
   }
   const supported = mito.target_status === 'confirmed_target';
   const taxa = mito.reference_taxa || [];
-  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, supported ? 'COI-supported identity' : 'Top COI reference match'), el('em', {}, supported ? sample.expected_taxon || 'Target confirmed' : taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : 'Not assigned'))));
+  const bestHit = mito.hits[0];
+  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, supported ? 'COI-supported identity' : 'COI reference match'), el('em', {}, supported ? sample.expected_taxon || 'Target confirmed' : taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : mito.hits.length ? 'Taxonomy unavailable' : 'No COI match'), bestHit ? el('small', {}, `${fmt(bestHit.identity)}% identity · ${fmt(bestHit.aligned_bp)} bp`) : null)));
   root.append(el('div', {class: 'file-line'}, link(mito.sequence, mito.accepted ? 'Download accepted FASTA ↓' : 'Download candidate FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
   if (mito.annotation.features.length) root.append(details(`Annotation table · ${mito.annotation.features.length} feature records`, table(['Gene / feature', 'Type', 'Start', 'End', 'Strand', 'Product'], mito.annotation.features.map(feature => [feature.gene, feature.type, fmt(feature.start), fmt(feature.end), feature.strand, feature.product]))));
   root.append(details('Taxonomic evidence', el('div', {},
-    table(['Check', 'Result'], [
-      ['BOLD target check', human(mito.target_status)],
-      ['Reason', mito.target_reason],
-      ['Annotation', mito.annotation_scope === 'exploratory_candidate' ? 'Exploratory MITOS annotation' : human(mito.annotation_status)],
-      ['Assembly acceptance', mito.accepted ? 'Accepted' : 'Not accepted']
-    ]),
+    table(['Check', 'Result'], [['Target agreement', supported ? 'Confirmed' : mito.target_status === 'non_target' ? 'Different taxon' : 'Unconfirmed']]),
     mito.hits.length ? table(['BOLD record', 'Reference taxon', 'Identity', 'Aligned bp'], mito.hits.map(hit => [hit.record, hit.taxon, fmt(hit.identity)+'%', fmt(hit.aligned_bp)])) : null,
     mito.hit_count > mito.hits.length ? el('p', {class: 'subtle'}, `${mito.hits.length} of ${fmt(mito.hit_count)} records shown`) : null,
-    link(mito.evidence_file, 'Full BOLD evidence ↓'))));
+    el('div', {class: 'file-line'}, link(mito.raw_hits_file, 'COI alignments ↓'), link(mito.evidence_file, 'BOLD results ↓')))));
   if (mito.files.length) root.append(fileList(mito.files));
   return root;
 }
 function itsView(sample) {
   const its = sample.its, root = document.createDocumentFragment();
-  if (its.diagnostic_reason) root.append(details('ITSME diagnostics', el('p', {class: 'note'}, its.diagnostic_reason)));
   const index = Math.min(state.locus, Math.max(0, its.loci.length-1)), locus = its.loci[index];
   root.append(metrics([
     ['Complete loci', fmt(its.count)],
@@ -184,9 +175,9 @@ function itsView(sample) {
   const host = el('div'); root.append(host);
   if (state.mode === 'graph') renderGraph(its.graphs, host);
   else if (locus) host.append(mapSequence(locus.locus_length_bp || Math.max(0, ...locus.regions.map(region => region.end)), locus.regions, true));
-  else host.append(empty(its.status === 'not_requested' ? 'ITSME not requested' : ['missing_report','unsupported_report','failed_no_report','not_run'].includes(its.status) ? 'ITSME results unavailable' : 'No complete ITS locus reported', its.status === 'not_requested' ? 'ITSME was not requested for this sample.' : 'Check the run record and retained ITSME files. Partial sequences may still be present.'));
+  else host.append(empty(its.status === 'not_requested' ? 'ITSME not requested' : ['missing_report','unsupported_report','failed_no_report','not_run'].includes(its.status) ? 'ITSME results unavailable' : 'No complete ITS locus reported', ''));
   if (locus) {
-    root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'Predicted consensus taxon'), el('em', {title: human(locus.taxonomy_status)}, locus.taxon || 'Not assigned')), el('div', {}, el('h4', {}, 'Cassette lengths'), el('p', {}, `ITS1 ${fmt(locus.its1_length_bp)} bp · 5.8S ${fmt(locus.five_8s_length_bp)} bp · ITS2 ${fmt(locus.its2_length_bp)} bp`))));
+    root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'Predicted consensus taxon'), el('em', {}, locus.taxon || 'Not assigned')), el('div', {}, el('h4', {}, 'Cassette lengths'), el('p', {}, `ITS1 ${fmt(locus.its1_length_bp)} bp · 5.8S ${fmt(locus.five_8s_length_bp)} bp · ITS2 ${fmt(locus.its2_length_bp)} bp`))));
     if (locus.consensus_taxonomy) root.append(el('p', {class: 'lineage'}, el('strong', {}, 'Consensus lineage  '), locus.consensus_taxonomy));
   }
   root.append(el('div', {class: 'file-line'}, link(its.sequence, its.sequence?.name.includes('complete_ITS') ? 'ITS cassette FASTA ↓' : 'rDNA loci FASTA ↓', true), its.cassette_sequence?.href !== its.sequence?.href ? link(its.cassette_sequence, 'ITS cassette FASTA') : null, link(its.summary_file, 'ITSME results table')));
@@ -197,14 +188,14 @@ function runView(sample) {
   const root = document.createDocumentFragment(), qc = sample.qc;
   root.append(metrics([['Input reads', fmt(qc.reads_before)], ['Retained reads', fmt(qc.reads_after), '', exists(qc.reads_before) && qc.reads_before > 0 && exists(qc.reads_after) ? fmt(qc.reads_after/qc.reads_before*100)+'% retained' : ''], ['Q30 after QC', exists(qc.q30_after) ? fmt(qc.q30_after*100)+'%' : '—'], ['Recorded stages', fmt(sample.stages.length)]]));
   root.append(el('div', {class: 'progress-track', 'aria-hidden': 'true'}, sample.stages.map(stage => el('div', {class: stage.status.toLowerCase(), title: stage.stage+': '+stage.status}))));
-  if (sample.stages.length) root.append(table(['Stage', 'Status', 'Time', 'Note'], sample.stages.map(stage => {
+  if (sample.stages.length) root.append(table(['Stage', 'Status', 'Time'], sample.stages.map(stage => {
     const failed = ['failed', 'timeout'].includes(stage.status.toLowerCase());
     const status = failed && stage.log ? link(stage.log, human(stage.status)+' ↓') : el('span', {}, human(stage.status));
     status.className = 'stage-status '+stage.status.toLowerCase();
     if (failed && stage.log) status.setAttribute('aria-label', `Download ${human(stage.stage)} ${human(stage.status)} log`);
-    return [human(stage.stage), status, numberTime(stage.elapsed_seconds), stage.reason];
+    return [human(stage.stage), status, numberTime(stage.elapsed_seconds)];
   })));
-  else root.append(empty('No stage table available', 'Use the saved sample summary and native logs below.'));
+  else root.append(empty('No stage records', ''));
   root.append(el('div', {class: 'file-line'}, link(qc.report, 'Open QC report'), link(sample.summary_file, 'Sample summary')));
   if (sample.logs.length) root.append(fileList(sample.logs, 'Native logs'));
   return root;
@@ -214,9 +205,8 @@ function renderView() {
   const sample = report.samples[state.sample];
   $('view').replaceChildren(state.branch === 'mito' ? mitoView(sample) : state.branch === 'its' ? itsView(sample) : runView(sample));
   const badge=$('sample-status');
-  badge.textContent=state.branch==='its'?'ITSME · '+human(sample.its.run_status):state.branch==='mito'?'Mito recovery · '+human(sample.status):'Run · '+human(sample.status);
+  badge.textContent=state.branch==='its'?'ITSME · '+human(sample.its.run_status):state.branch==='mito'?'Mito · '+(sample.mito.accepted?'Accepted':sample.mito.sequence?'Candidate':'No sequence'):'Run record';
   badge.className='status '+(state.branch==='its'?(sample.its.run_status==='completed'?'':['failed','timeout'].includes(sample.its.run_status)?'fail':'warn'):sample.status.includes('failed')?'fail':sample.mito.accepted?'':'warn');
-  if (sample.warnings.length) $('view').prepend(el('p', {class: 'note warning'}, sample.warnings.join(' ')));
   document.querySelectorAll('[data-branch]').forEach(button => {if (button.dataset.branch === state.branch) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');});
 }
 function render() {

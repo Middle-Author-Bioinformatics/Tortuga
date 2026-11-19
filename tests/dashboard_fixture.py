@@ -82,7 +82,12 @@ def make_demo(root, samples=8):
         atomic_json(sample/'candidates/011_novoplasty_001/bold_evidence.json', {
             'status': result['target_status'],
             'reason': 'BOLD near-best score window reaches the search limit' if index == 6 else 'All near-best qualifying BOLD records match requested taxon',
-            'hits': [{'bitscore': '1200', 'pident': '99.3', 'length': '648', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
+            'hits': [{'bitscore': None if index == 6 else '1200', 'pident': '99.3', 'length': '648', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
+        if index == 0:
+            # Reproduce multiple out-of-bounds feature warnings in the native GFF.
+            with (sample/'MitoLooper/mitos_result.gff').open('a') as handle:
+                for start in [length+1, length+50]:
+                    handle.write(f'candidate\tMITOS2\tCDS\t{start}\t{start+20}\t.\t+\t.\tName=outside\n')
         stages = [{'stage': step, 'status': status, 'elapsed_seconds': secs, 'reason': reason} for step, status, secs, reason in [
             ('qc','ok',182,''), ('novoplasty','ok',740,''), ('getorganelle','skipped',0,'Candidate already met acceptance policy'),
             ('itsme','ok',1840,''), ('wgs','timeout',7200,'Stopped at the configured wall-clock limit'), ('mtgrasp','failed',12,''), ('mitos2','ok' if accepted else 'skipped',215,'')]]

@@ -228,8 +228,77 @@ def test_matching_reference_name_does_not_override_unresolved_target_check(tmp_p
     assert data['target_status'] == 'unresolved' and not data['accepted']
     assert data['target_reason'] == evidence['reason']
     assert json.loads((sample/'final/summary.json').read_text()) == summary
-    # Older records without scores can be listed, but cannot establish a top hit.
+    # Names in older records stay visible without claiming a score ranking.
     for hit in evidence['hits']:
         hit.pop('bitscore', None)
     atomic_json(evidence_path, evidence)
-    assert not d.build_data(root)['samples'][0]['mito']['reference_taxa']
+    older = d.build_data(root)['samples'][0]['mito']
+    assert older['reference_taxa'] == ['Other species', 'Rathbunixa occidentalis', 'Tied species']
+    assert older['reference_ranked'] is False
+
+
+@pytest.mark.parametrize('override', [False, True])
+def test_raw_bold_matches_restore_taxa_when_confirmation_retained_no_hits(tmp_path, override):
+    from compact_outputs import table
+    root = make_demo(tmp_path/'results', samples=2)
+    metadata = tmp_path/'metadata.tsv'
+    table(metadata, [
+        {'sequence_id': 'COI_A', 'processid': 'A', 'taxon': 'Observed species', 'lineage': 'Animalia;Observed species'},
+        {'sequence_id': 'COI_B', 'processid': 'B', 'taxon': 'Another species', 'lineage': 'Animalia;Another species'},
+    ], ['sequence_id', 'processid', 'taxon', 'lineage'])
+    for name in ['W30877', 'W30882']:
+        sample = root/name
+        summary = json.loads((sample/'final/summary.json').read_text())
+        summary.update(target_status='unresolved', accepted_by_policy=False, target_taxon='Expected species')
+        atomic_json(sample/'final/summary.json', summary)
+        config = {'options': {'bold_metadata': str(tmp_path/'unavailable.tsv' if override else metadata)}}
+        # Preserve the checkpoint age: changing its timestamp means a new run attempt.
+        config_path = sample/'run_config.json'
+        import os
+        old_time = config_path.stat().st_mtime_ns
+        atomic_json(config_path, config)
+        os.utime(config_path, ns=(old_time, old_time))
+        folder = sample/'candidates/011_novoplasty_001'
+        atomic_json(folder/'bold_evidence.json', {'status': 'unresolved', 'hits': [],
+                                                'reason': 'No qualifying BOLD COI alignment'})
+        rows = [dict(zip(d.BOLD_COLUMNS, ['COI', subject, '95', '500', '650', '650', '1', '500', '1', '500', '1e-80', score]))
+                for subject, score in [('COI_B', '800'), ('COI_A', '900')]]
+        put(folder/'bold_hits.tsv', '\n'.join('\t'.join(row[col] for col in d.BOLD_COLUMNS) for row in rows)+'\n')
+    # One streaming pass services both samples; no full 20M-record metadata load.
+    original_open = Path.open
+    metadata_reads = []
+    def counted_open(path, *args, **kwargs):
+        if path == metadata:
+            metadata_reads.append(path)
+        return original_open(path, *args, **kwargs)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'open', counted_open)
+        report = payload(d.write_dashboard(root, bold_metadata=metadata if override else None))
+    assert len(metadata_reads) == 1
+    for sample in report['samples']:
+        mito = sample['mito']
+        assert mito['reference_taxa'] == ['Observed species']
+        assert mito['hits'][0]['record'] == 'A' and mito['hits'][0]['identity'] == 95
+        assert mito['target_status'] == 'unresolved' and not mito['accepted']
+        assert 'Expected species' not in mito['reference_taxa']
+    assert str(metadata) not in (root/'dashboard.html').read_text()
+
+
+def test_unknown_reference_metadata_does_not_fall_back_to_expected_identity(tmp_path):
+    root = make_demo(tmp_path/'results', samples=1)
+    sample = root/'W30877'
+    summary = json.loads((sample/'final/summary.json').read_text())
+    summary.update(target_status='unresolved')
+    atomic_json(sample/'final/summary.json', summary)
+    folder = sample/'candidates/011_novoplasty_001'
+    atomic_json(folder/'bold_evidence.json', {'status': 'unresolved', 'hits': [
+        {'sseqid': 'unknown', 'bitscore': '900', 'pident': '95', 'length': '500'}]})
+    mito = d.build_data(root)['samples'][0]['mito']
+    assert not mito['reference_taxa'] and mito['hits'][0]['subject'] == 'unknown'
+
+
+def test_repeated_annotation_bounds_messages_are_deduplicated_in_saved_data(tmp_path):
+    path = put(tmp_path/'result.gff', 'mt\tMITOS2\tCDS\t90\t110\t.\t+\t.\tName=one\n'
+                                    'mt\tMITOS2\tCDS\t95\t120\t.\t+\t.\tName=two\n')
+    result = d.annotations(path, 100, tmp_path)
+    assert not result['features'] and len(result['warnings']) == 1
