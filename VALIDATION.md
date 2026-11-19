@@ -125,3 +125,13 @@ in one pass across samples, explicit metadata overrides and unknown names withou
 substituting the expected taxon. DOM tests use repeated out-of-bounds features and
 verify that no technical warning/commentary paragraphs are rendered in assembly,
 ITS, graph, run or expanded evidence views. Native annotations remain unchanged.
+
+Version 2.4.0 tests native MITOS gene-versus-CDS features with RNA, parent/child
+deduplication, multipart/circular-origin extraction, reverse complements, core
+gene aliases/extras, source-scoped selected graphs, overlap-adjusted locus lengths,
+shared-node taxonomy, exact FASTG overlap inference, sequence-mismatch rejection,
+graph preservation before cleanup and sequence-content FASTA deduplication.
+Short COI references and conservative confidence/missing-evidence cases are
+covered. DOM checks exercise sequence popovers, selected paths, shared nodes,
+hierarchy and gene counts. Actual Belly data and visual browser rendering were
+not available for this update.

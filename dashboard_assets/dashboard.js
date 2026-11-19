@@ -32,6 +32,25 @@ function table(headers, rows) {
   return el('div', {class: 'table-wrap'}, el('table', {}, el('thead', {}, el('tr', {}, headers.map(header => el('th', {scope: 'col'}, header)))), el('tbody', {}, rows.map(row => el('tr', {}, row.map(cell => el('td', {}, exists(cell) ? cell : '—')))))));
 }
 function details(title, content) {return el('details', {class: 'details'}, el('summary', {}, title), content);}
+let sequencePopover;
+function showSequence(anchor, name, sequence, description = '') {
+  sequencePopover?.remove();
+  const field = el('textarea', {readonly: '', 'aria-label': 'Nucleotide sequence', spellcheck: 'false'}, sequence || 'Sequence unavailable');
+  const copy = el('button', {class: 'copy-sequence', disabled: sequence ? null : '', onclick: async () => {
+    try {await navigator.clipboard.writeText(sequence); copy.textContent = 'Copied';}
+    catch (_) {field.focus(); field.select(); if (document.execCommand) document.execCommand('copy'); copy.textContent = 'Selected';}
+  }}, 'Copy sequence');
+  const fasta = '>'+name.replaceAll(/[^A-Za-z0-9_.-]/g, '_')+'\n'+(sequence.match(/.{1,80}/g) || []).join('\n')+'\n';
+  const box = el('div', {class: 'sequence-popover', role: 'dialog', 'aria-label': name+' sequence'},
+    el('div', {class: 'popover-head'}, el('strong', {}, name), el('button', {'aria-label': 'Close sequence', onclick: () => box.remove()}, '×')),
+    el('p', {}, description), field,
+    el('div', {class: 'file-line'}, copy, sequence ? el('a', {href: 'data:text/plain;charset=utf-8,'+encodeURIComponent(fasta), download: name+'.fasta'}, 'FASTA ↓') : null,
+      el('a', {href: 'https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch', target: '_blank', rel: 'noopener noreferrer'}, 'NCBI BLAST ↗')));
+  document.body.append(box); sequencePopover = box;
+  const bounds = anchor.getBoundingClientRect();
+  box.style.left = Math.max(12, Math.min(bounds.left, window.innerWidth-440))+'px';
+  box.style.top = Math.max(12, Math.min(bounds.bottom+8, window.innerHeight-350))+'px';
+}
 function fileList(files, title = 'All retained files') {
   return files.length ? details(title+' · '+files.length, table(['File', 'Size'], files.map(file => [link(file), fmt(file.bytes/1024)+' KiB']))) : null;
 }
@@ -72,21 +91,24 @@ function mapSequence(length, features, regionMap = false) {
   const colors = regionMap ? {'SSU': '#587c69', 'ITS1': '#96d1b1', '5.8S': '#d4b477', 'ITS2': '#96d1b1', 'LSU': '#587c69'} : {CDS: '#96d1b1', rRNA: '#d4b477', tRNA: '#b7a1ce'};
   for (const feature of features) {
     const name = regionMap ? feature.name : feature.gene;
-    const x = scale(feature.start), width = Math.max(2, (feature.end-feature.start+1)/length*850);
     const y = regionMap ? 65 : feature.strand === '-' ? 99 : 47;
     const group = svg('g', {class: 'gene', tabindex: 0, role: 'button', 'aria-label': `${name}, ${feature.start} to ${feature.end} bp`});
-    group.append(svg('rect', {x, y, width, height: 29, rx: 2, fill: colors[regionMap ? name : feature.type] || '#7e9a8a'}));
-    if (width > name.length*6.7+8) {const label = svg('text', {x: x+width/2, y: y+19, 'text-anchor': 'middle', fill: '#10251b', 'font-size': 11}); label.textContent = name; group.append(label);}
-    const select = () => {drawing.querySelectorAll('.selected').forEach(node => node.classList.remove('selected')); group.classList.add('selected'); readout.textContent = `${name} · ${regionMap ? 'region' : feature.type} · ${fmt(feature.start)}–${fmt(feature.end)} bp · ${fmt(feature.end-feature.start+1)} bp${feature.strand ? ' · strand '+feature.strand : ''}${feature.product ? ' · '+feature.product : ''}`;};
+    for (const [start, end] of feature.segments || [[feature.start, feature.end]]) {
+      const x = scale(start), width = Math.max(2, (end-start+1)/length*850);
+      group.append(svg('rect', {x, y, width, height: 29, rx: 2, fill: colors[regionMap ? name : feature.type] || '#7e9a8a'}));
+      if (width > name.length*6.7+8) {const label = svg('text', {x: x+width/2, y: y+19, 'text-anchor': 'middle', fill: '#10251b', 'font-size': 11}); label.textContent = name; group.append(label);}
+    }
+    const select = () => {drawing.querySelectorAll('.selected').forEach(node => node.classList.remove('selected')); group.classList.add('selected'); readout.textContent = `${name} · ${fmt(feature.start)}–${fmt(feature.end)} bp${feature.strand ? ' · '+feature.strand : ''}`; showSequence(group, name, feature.sequence || '', readout.textContent);};
     group.addEventListener('click', select); group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); select();}});
     drawing.append(group);
   }
   panel.append(drawing, readout, el('div', {class: 'legend'}, Object.entries(regionMap ? {'ITS cassette': '#96d1b1', '5.8S': '#d4b477', 'Flanking rRNA': '#587c69'} : {CDS: '#96d1b1', rRNA: '#d4b477', tRNA: '#b7a1ce'}).map(([label, color]) => el('span', {}, el('i', {style: 'background:'+color}), label))));
   return panel;
 }
-function renderGraph(graphs, host) {
-  if (!graphs.length) {host.append(empty('No assembly graph retained', '')); return;}
-  const select = el('select', {'aria-label': 'Assembly graph file'}, graphs.map((graph, index) => el('option', {value: index}, graph.file.name)));
+function renderGraph(graphs, host, locus = null, method = '') {
+  if (locus) graphs = graphs.filter(graph => (graph.loci || []).includes(locus.locus));
+  if (!graphs.length) {host.append(empty('Source graph unavailable', method === 'novoplasty' ? 'NOVOPlasty sequence output' : '')); return;}
+  const select = el('select', {'aria-label': 'Assembly graph file'}, graphs.map((graph, index) => el('option', {value: index}, graph.label || graph.file?.name || 'Selected assembly')));
   const zoomIn = el('button', {'aria-label': 'Zoom in'}, '+'), zoomOut = el('button', {'aria-label': 'Zoom out'}, '−'), reset = el('button', {'aria-label': 'Fit graph'}, 'Fit');
   const tools = el('div', {class: 'graph-tools'}, select, el('div', {class: 'graph-buttons'}, zoomOut, zoomIn, reset));
   const plot = el('div'); host.append(tools, plot);
@@ -104,11 +126,15 @@ function renderGraph(graphs, host) {
       const curve = svg('path', {class: 'link', d: path}); const title = svg('title'); title.textContent = `${edge.source}${edge.source_strand} → ${edge.target}${edge.target_strand}${edge.overlap ? ' · overlap '+edge.overlap : ''}`; curve.append(title); pane.append(curve);
     }
     const readout = el('div', {class: 'graph-readout', 'aria-live': 'polite', title: 'Graph positions and segment widths are schematic.'}, 'Drag to pan · scroll to zoom · select a segment');
+    const selectedLocus = locus?.locus || 'mitogenome';
     for (const node of graph.nodes) {
-      const group = svg('g', {class: 'segment', transform: `translate(${node.x} ${node.y})`, tabindex: 0, role: 'button', 'aria-label': 'Segment '+node.id});
+      const active = (node.loci || []).includes(selectedLocus);
+      const group = svg('g', {class: 'segment'+(active?' path-node':' context-node')+((node.loci || []).length > 1?' shared-node':''), transform: `translate(${node.x} ${node.y})`, tabindex: 0, role: 'button', 'aria-label': 'Segment '+node.id});
       group.append(svg('rect', {x: -34, y: -13, width: 68, height: 26, rx: 8}));
       const text = svg('text', {'text-anchor': 'middle', y: 4}); text.textContent = node.id.length > 9 ? node.id.slice(0, 8)+'…' : node.id; group.append(text);
-      const choose = () => {pane.querySelectorAll('.chosen').forEach(item => item.classList.remove('chosen')); group.classList.add('chosen'); readout.textContent = `Segment ${node.id} · ${fmt(node.length)} bp · coverage ${exists(node.coverage) ? fmt(node.coverage)+'×' : 'not recorded'}`;};
+      const taxa = node.taxa || [];
+      if (taxa.length) {const label = svg('text', {'text-anchor': 'middle', y: 30, class: 'node-taxon'}); label.textContent = taxa.length > 1 ? taxa.length+' taxa' : taxa[0].length > 20 ? taxa[0].slice(0, 19)+'…' : taxa[0]; group.append(label);}
+      const choose = () => {pane.querySelectorAll('.chosen').forEach(item => item.classList.remove('chosen')); group.classList.add('chosen'); readout.textContent = `Segment ${node.id} · ${fmt(node.length)} bp · ${exists(node.coverage) ? fmt(node.coverage)+'×' : '—'} · ${taxa.join(' / ') || 'Taxonomy unavailable'}`; showSequence(group, 'Segment_'+node.id, node.sequence || '', `${readout.textContent} · ${node.taxonomy_scope || ''} · ${(node.loci || []).join(' / ')}`);};
       group.addEventListener('click', choose); group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); choose();}}); pane.append(group);
     }
     let tx = 0, ty = 0, scale = 1;
@@ -124,6 +150,14 @@ function renderGraph(graphs, host) {
     drawing.addEventListener('pointerup', () => {drag = null;}); drawing.addEventListener('pointercancel', () => {drag = null;});
     fit();
     plot.append(drawing, readout, el('div', {class: 'graph-caption'}, el('span', {}, `${fmt(graph.nodes.length)}${graph.truncated ? ' / '+fmt(graph.total_nodes) : ''} segments · ${fmt(graph.edges.length)} links`), link(graph.file, 'Download graph')));
+    const path = graph.paths?.[selectedLocus];
+    if (path) {
+      const sum = path.steps.reduce((total, step) => total+step.length, 0);
+      const overlaps = path.steps.reduce((total, step) => total+(step.overlap || 0), 0);
+      plot.append(el('div', {class: 'path-ribbon'}, path.steps.map(step => el('span', {}, step.node+step.orientation))));
+      if (path.sequence_verified) plot.append(el('p', {class: 'path-equation'}, `${fmt(path.locus_bp)} bp = ${fmt(sum)} segment bp − ${fmt(overlaps)} overlap bp${path.trimmed_bp ? ' − '+fmt(path.trimmed_bp)+' trimmed bp' : ''}`));
+      plot.append(details('Sequence path', table(['Segment', 'Strand', 'Length', 'Overlap', 'Added bp'], path.steps.map(step => [step.node, step.orientation, fmt(step.length), fmt(step.overlap), fmt(step.added_bp)]))));
+    }
   };
   select.addEventListener('change', draw); draw();
 }
@@ -132,26 +166,28 @@ function mitoView(sample) {
   root.append(metrics([
     [mito.accepted ? 'Accepted assembly' : 'Best candidate', fmt(mito.length), 'bp'],
     ['Topology', mito.circular === true ? 'Circular' : mito.circular === false ? 'Unclosed' : 'Unknown'],
-    ['Reference genes', exists(mito.genes_expected) ? `${fmt(mito.genes_recovered)} / ${fmt(mito.genes_expected)}` : 'Unknown'],
+    [mito.core_genes?.source === 'MITOS annotation' ? 'Annotated core CDS / rRNA' : 'Screened core CDS / rRNA', `${fmt(mito.core_genes?.cds)} / 13 · ${fmt(mito.core_genes?.rrna)} / 2`, '', mito.core_genes?.extra?.length ? 'Additional: '+mito.core_genes.extra.join(', ') : ''],
     ['Recovery method', mito.method ? methodName(mito.method) : '—']
   ]));
   root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'Assembly topology' : 'Mitochondrial sequence'), viewSwitch([['map', 'Sequence & genes'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
-  if (state.mode === 'graph') renderGraph(mito.graphs, host);
+  if (state.mode === 'graph') renderGraph(mito.graphs, host, null, mito.method);
   else {
     const features = mito.annotation.features;
-    const types = new Set(['CDS', 'rRNA', 'tRNA', 'ncRNA']);
+    const types = new Set(['CDS', 'gene', 'rRNA', 'tRNA', 'ncRNA']);
     const selected = features.some(feature => types.has(feature.type)) ? features.filter(feature => types.has(feature.type)) : features.filter(feature => feature.type === 'gene');
     host.append(mito.annotation.multiple_sequences ? empty('Multiple annotation sequences', '') : mapSequence(mito.length, selected));
   }
   const supported = mito.target_status === 'confirmed_target';
   const taxa = mito.reference_taxa || [];
   const bestHit = mito.hits[0];
-  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, supported ? 'COI-supported identity' : 'COI reference match'), el('em', {}, supported ? sample.expected_taxon || 'Target confirmed' : taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : mito.hits.length ? 'Taxonomy unavailable' : 'No COI match'), bestHit ? el('small', {}, `${fmt(bestHit.identity)}% identity · ${fmt(bestHit.aligned_bp)} bp`) : null)));
+  const confidence = mito.confidence || {};
+  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, confidence.taxon ? 'COI consensus' : 'COI reference match'), el('em', {}, confidence.taxon || (taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : mito.hits.length ? 'Taxonomy unavailable' : 'No COI match')), bestHit ? el('small', {}, `${fmt(bestHit.identity)}% identity · ${fmt(bestHit.aligned_bp)} bp${exists(bestHit.coverage)?' · '+fmt(bestHit.coverage*100)+'% coverage':''}`) : null), el('div', {}, el('h4', {}, 'Match confidence'), el('p', {title: 'Evidence grade from identity, aligned bases, coverage, metadata and near-best taxonomic agreement; not a probability.'}, confidence.grade || 'Unavailable'))));
   root.append(el('div', {class: 'file-line'}, link(mito.sequence, mito.accepted ? 'Download accepted FASTA ↓' : 'Download candidate FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
   if (mito.annotation.features.length) root.append(details(`Annotation table · ${mito.annotation.features.length} feature records`, table(['Gene / feature', 'Type', 'Start', 'End', 'Strand', 'Product'], mito.annotation.features.map(feature => [feature.gene, feature.type, fmt(feature.start), fmt(feature.end), feature.strand, feature.product]))));
+  if (mito.reference_genes?.length) root.append(details('Reference gene recovery', table(['Gene', 'Type', 'Detected', 'Coverage'], mito.reference_genes.map(gene => [gene.gene, gene.type, String(gene.screen_pass).toLowerCase() === 'true' ? 'Yes' : 'No', fmt(Number(gene.query_coverage)*100)+'%']))));
   root.append(details('Taxonomic evidence', el('div', {},
-    table(['Check', 'Result'], [['Target agreement', supported ? 'Confirmed' : mito.target_status === 'non_target' ? 'Different taxon' : 'Unconfirmed']]),
+    table(['Check', 'Result'], [['Target agreement', !mito.hits.length ? 'Unavailable' : supported ? 'Confirmed' : mito.target_status === 'non_target' ? 'Different taxon' : 'Unconfirmed']]),
     mito.hits.length ? table(['BOLD record', 'Reference taxon', 'Identity', 'Aligned bp'], mito.hits.map(hit => [hit.record, hit.taxon, fmt(hit.identity)+'%', fmt(hit.aligned_bp)])) : null,
     mito.hit_count > mito.hits.length ? el('p', {class: 'subtle'}, `${mito.hits.length} of ${fmt(mito.hit_count)} records shown`) : null,
     el('div', {class: 'file-line'}, link(mito.raw_hits_file, 'COI alignments ↓'), link(mito.evidence_file, 'BOLD results ↓')))));
@@ -168,15 +204,24 @@ function itsView(sample) {
     ['Consensus resolution', locus?.taxonomy_rank ? human(locus.taxonomy_rank) : 'Unknown']
   ]));
   if (its.loci.length) {
-    const select = el('select', {'aria-label': 'Reported ITS locus', onchange: event => {state.locus = Number(event.target.value); renderView();}}, its.loci.map((entry, i) => el('option', {value: i, selected: i === index ? '' : null}, entry.locus)));
+    const select = el('select', {'aria-label': 'Reported ITS locus', onchange: event => {state.locus = Number(event.target.value); renderView();}}, its.loci.map((entry, i) => el('option', {value: i, selected: i === index ? '' : null}, entry.locus+(entry.taxon?' · '+entry.taxon:'')+' · '+fmt(entry.locus_length_bp)+' bp')));
     root.append(el('label', {class: 'locus-select'}, 'Reported locus', select));
   }
   root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'rDNA assembly graph' : 'Reconstructed rDNA locus'), viewSwitch([['map', 'Locus map'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
-  if (state.mode === 'graph') renderGraph(its.graphs, host);
+  if (state.mode === 'graph') renderGraph(its.graphs, host, locus);
   else if (locus) host.append(mapSequence(locus.locus_length_bp || Math.max(0, ...locus.regions.map(region => region.end)), locus.regions, true));
   else host.append(empty(its.status === 'not_requested' ? 'ITSME not requested' : ['missing_report','unsupported_report','failed_no_report','not_run'].includes(its.status) ? 'ITSME results unavailable' : 'No complete ITS locus reported', ''));
   if (locus) {
+    const selection = locus.selection || {};
+    const regionNames = new Set(locus.regions.map(region => region.name));
+    root.append(details('Locus selection', table(['Criterion', 'Result'], [
+      ['Structure', ['SSU','ITS1','5.8S','ITS2','LSU'].filter(name => regionNames.has(name)).join(' → ') || 'Not recorded'],
+      ['Taxonomy', String(locus.taxonomy_status).includes('PASS') ? 'Concordant' : 'Tentative'],
+      ['Source', selection.source || locus.locus],
+      ['Junctions supported', Number.isFinite(Number(selection.supported_junctions)) ? selection.supported_junctions+' / '+selection.junction_count : 'Not recorded'],
+      ['Representative', selection.alternative_count ? 'Longest of '+(selection.alternative_count+1)+' validated paths' : 'Reported complete locus']
+    ])));
     root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'Predicted consensus taxon'), el('em', {}, locus.taxon || 'Not assigned')), el('div', {}, el('h4', {}, 'Cassette lengths'), el('p', {}, `ITS1 ${fmt(locus.its1_length_bp)} bp · 5.8S ${fmt(locus.five_8s_length_bp)} bp · ITS2 ${fmt(locus.its2_length_bp)} bp`))));
     if (locus.consensus_taxonomy) root.append(el('p', {class: 'lineage'}, el('strong', {}, 'Consensus lineage  '), locus.consensus_taxonomy));
   }
@@ -202,6 +247,7 @@ function runView(sample) {
 }
 function numberTime(value) {const n = Number(value); return !exists(value) || !Number.isFinite(n) ? '—' : n < 60 ? fmt(n)+' s' : fmt(n/60)+' min';}
 function renderView() {
+  sequencePopover?.remove();
   const sample = report.samples[state.sample];
   $('view').replaceChildren(state.branch === 'mito' ? mitoView(sample) : state.branch === 'its' ? itsView(sample) : runView(sample));
   const badge=$('sample-status');
@@ -214,6 +260,9 @@ function render() {
   $('sample-name').textContent = sample.id;
   $('sample-position').textContent = `SAMPLE ${String(state.sample+1).padStart(2, '0')} / ${String(report.samples.length).padStart(2, '0')}`;
   $('expected-name').replaceChildren(sample.expected_taxon ? 'Expected identity · ' : 'Expected identity not supplied', sample.expected_taxon ? el('em', {}, sample.expected_taxon) : '');
+  const ranks = ['domain','kingdom','phylum','class','order','family','genus','species'];
+  const hierarchy = Object.entries(sample.expected_taxonomy || {}).filter(([rank, name]) => name).sort(([a],[b]) => ranks.indexOf(a.toLowerCase())-ranks.indexOf(b.toLowerCase())).map(([rank, name]) => el('span', {title: human(rank)}, name));
+  $('expected-hierarchy').replaceChildren(...hierarchy.flatMap((item, i) => i ? [' › ', item] : [item]));
   const badge = $('sample-status'); badge.textContent = human(sample.status); badge.className = 'status '+(sample.status.includes('failed') ? 'fail' : sample.mito.accepted ? '' : 'warn');
   renderView();
 }

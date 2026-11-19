@@ -1,4 +1,4 @@
-# Tortuga 2.3.1
+# Tortuga 2.4.0
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -106,6 +106,66 @@ from the `mito_workflow` environment: unlisted tools are resolved from its PATH.
 The help probes also save tool help/version text in `tool_checks.json`. An
 installed tool returning nonzero for `-h` needs inspection, even if usable.
 Probe success checks launchability, not database validity or biological performance.
+
+## Client report and selected assembly paths (2.4.0)
+
+The dashboard recognizes MITOS protein-coding `gene` features alongside RNA
+features. Clicking a gene, ITS region or graph node opens its nucleotide sequence
+with Copy, FASTA download and an NCBI BLAST link. Minus-strand features are
+reverse-complemented; supported circular-origin and multipart features retain
+their sequence parts.
+
+Gene counts separate the usual 13 core CDS and two rRNAs from additional genes
+and distinguish MITOS annotation from the reference screen. Some sponge genomes
+have an additional `atp9`; their 14 CDS + 2 rRNA reference count of 16 is legitimate.
+See the [Geodia/Tethya reference study](https://doi.org/10.1093/molbev/msi108).
+
+Graphs now follow the source of each reported ITS locus or selected mitochondrial
+candidate. The report highlights its nodes, shared loci, path orientations and
+overlap-adjusted length. Node taxonomy is explicitly associated with the locus
+consensus or assembly COI match; unclassified nodes do not inherit expected names.
+New compact runs save reduced graphs and path provenance before deleting assembly
+work. Unrelated graphs and duplicate FASTA aliases are omitted from the client
+download list. `--keep-intermediates` preserves full native work.
+
+Rebuild an existing report without assembly or reannotation:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/build_dashboard.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy \
+  --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv
+```
+
+The builder also writes small selected-graph/provenance assets. Already deleted
+source graphs or native path files cannot always be reconstructed from a FASTA.
+The old message "graph not retained" meant a graph product was unavailable, not
+that sequence assembly failed. NOVOPlasty candidates can have sequence output
+without a source graph; the report does not fabricate one.
+
+COI confirmation now defaults to **150 aligned bp**, configurable with
+`--coi-min-bp`; identity (97%) and shorter-sequence coverage (80%) defaults remain.
+`prepare_bold.py --min-bp` also defaults to 150 for new reference preparations.
+Previously prepared libraries keep their original length filter. To include
+reference barcodes previously excluded below 400 bp, prepare the original TSV
+again with `--min-bp 150` into a new directory and use both new output files.
+The report independently displays saved alignment matches and an evidence grade
+(High, Moderate, Low, Mixed, Limited, Unavailable), including identity, aligned
+length and coverage. This is not a calibrated species probability. No observed
+match means no predicted taxon; expected taxonomy appears only in its labeled
+header, now including the supplied hierarchy.
+
+To explicitly repeat COI validation for existing candidates with the shorter cutoff:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/annotate_existing.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy \
+  --recheck-bold --coi-min-bp 150
+```
+
+This uses existing candidate sequences and reuses unchanged successful MITOS
+annotations. It does not run assemblers or ITSME. Without the explicit override,
+the helper preserves the original run's saved COI threshold. New runs use the new
+default; use a new output directory for changed run settings.
 
 ## MITOS output-directory fix (2.3.1)
 
@@ -300,7 +360,7 @@ python prepare_bold.py /path/to/bold_export.tsv.gz \
 The helper recognizes `nuc`/`nucleotides`/`nucleotide_sequence`/`sequence`,
 `processid`/`process_id`, and `marker_code`/`marker`/`markercode`. Explicit column
 overrides are available in `--help`. Taxonomy comes from standard kingdom through
-subspecies columns. It retains eligible COI/COI-5P records of at least 400 bp and
+subspecies columns. It retains eligible COI/COI-5P records of at least 150 bp by default and
 logs skipped records. It does not download the reference dataset.
 
 Alternatively supply an existing FASTA and a normalized metadata TSV with exactly
@@ -319,7 +379,7 @@ every other base in the assembled contig or exclude NUMTs/mitochondrial chimeras
 
 COX1 is located by translated comparison to the curated reference. Its nucleotide
 sequence is searched against the BOLD COI database. Defaults require >=97%
-identity, >=400 aligned bp and >=80% of the shorter marker/barcode sequence.
+identity, >=150 aligned bp and >=80% of the shorter marker/barcode sequence.
 Every qualifying hit within 2% of the best bit score must agree with the requested
 taxon. Missing metadata, conflicting near-best hits, a higher-scoring hit failing
 quality gates leaves the candidate unresolved. Reaching the subject limit alone

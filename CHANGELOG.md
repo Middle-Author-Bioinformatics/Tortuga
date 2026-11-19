@@ -1,4 +1,19 @@
-# Unreleased
+# 2.4.0 - 2026-11-19
+
+- Fix MITOS coding-gene display when RNA features coexist; support CDS parents,
+  split features, circular-origin coordinates and stranded sequence extraction.
+  Add gene/region/node sequence popovers with copy and FASTA download.
+- Separate canonical 13 CDS/two rRNA counts from additional reference genes and
+  distinguish annotation from homology screening. Show the expected hierarchy.
+- Follow reported ITS/mitogenome source paths, reduce graphs to contributing
+  nodes, highlight shared loci, label taxonomic assignment scope and reconcile
+  sequence lengths with overlaps. Preserve reduced graphs/provenance before
+  compact cleanup. Hide duplicate FASTA aliases and unrelated graph inventories.
+- Support 150-bp COI alignments/reference preparation by default, retain explicit
+  threshold overrides and record thresholds in BOLD evidence. Add conservative
+  match-confidence grades without substituting expected names for observations.
+
+# Earlier updates
 
 - Add a database installation guide with download/preparation commands for ITSME,
   GetOrganelle animal_mt, MITOS refseq89m (including its checksum), annotated NCBI

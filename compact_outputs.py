@@ -292,7 +292,7 @@ def standardize_layout(root):
         if path.is_file() and not path.is_symlink():
             entries[str(path)]={**row,"retained_file":str(path),"bytes":path.stat().st_size}
     for directory in branches.values():
-        for path in directory.iterdir():
+        for path in directory.rglob('*'):
             if path.is_file() and not path.is_symlink():
                 entries.setdefault(str(path),{"source":str(path),"retained_file":str(path),"kind":kind(path) or "metadata","bytes":path.stat().st_size})
     table(manifest,list(entries.values()),["source","retained_file","kind","bytes"])
@@ -385,8 +385,40 @@ def compact_sample(root,remove=True,dry_run=False):
         if path.is_file() and not path.is_symlink() and path.name not in {"summary.json","outputs_manifest.tsv"} and str(path) not in retained:
             unique[str(path)]={"source":str(path),"retained_file":str(path),"kind":kind(path) or "metadata","bytes":path.stat().st_size}
     table(old_manifest,list(unique.values()),["source","retained_file","kind","bytes"])
+    # Resolve selected paths while native per-bin graphs and SPAdes path files
+    # still exist. Reduced graphs/provenance remain outside disposable stage trees.
+    standardize_layout(root)
+    from build_dashboard import collect_sample
+    from graph_evidence import report_graphs
+    display = collect_sample(root, root.parent)
+    selected_graphs = report_graphs(root, root.parent, display, write=True)
+    # Once every final sequence has a preserved selected subgraph, default
+    # compaction no longer needs duplicate/full source-graph exports for that branch.
+    covered = {'ITSME': {locus for graph in selected_graphs['ITSME'] for locus in graph['loci']},
+               'MitoLooper': {locus for graph in selected_graphs['MitoLooper'] for locus in graph['loci']}}
+    required = {'ITSME': {locus['locus'] for locus in display['its']['loci']}, 'MitoLooper': {'mitogenome'}}
+    prunable = []
+    if remove:
+        for row in unique.values():
+            target = Path(row['retained_file'])
+            branch = target.parent.name
+            if (row['kind'] == 'graph' and branch in covered and required[branch]
+                    and required[branch] <= covered[branch] and target.is_file()
+                    and not target.is_symlink() and target.absolute() not in protected):
+                prunable.append(target)
     deletion_rows=[]
     if remove:
+        for path in sorted(set(prunable)):
+            deletion_rows.append({'path':str(path),'bytes':path.stat().st_size,'reason':'selected sequence subgraph preserved'})
+            path.unlink()
+        if prunable:
+            removed_targets = {path.resolve() for path in prunable}
+            for alias in final.iterdir():
+                if alias.is_symlink() and alias.resolve() in removed_targets:
+                    alias.unlink()
+        if prunable:
+            unique = {key: row for key, row in unique.items() if Path(row['retained_file']).is_file()}
+            table(old_manifest,list(unique.values()),["source","retained_file","kind","bytes"])
         for path in disposable:
             deletion_rows.append({"path":str(path),"bytes":path.lstat().st_size,"reason":"exported product or disposable stage intermediate"})
             path.unlink()

@@ -18,7 +18,7 @@ def saved_options(config, cli):
     for key,value in config.get('options',{}).items():
         if hasattr(args,key):
             setattr(args,key,value)
-    for key in ['mitos_refdir','mitos_refseqver','bold_fasta','bold_metadata','threads','annotation_timeout','bold_max_hits','bold_search_max_hits']:
+    for key in ['mitos_refdir','mitos_refseqver','bold_fasta','bold_metadata','threads','annotation_timeout','bold_max_hits','bold_search_max_hits','coi_min_bp','coi_identity','coi_coverage']:
         value=getattr(cli,key,None)
         if value is not None:
             setattr(args,key,value)
@@ -39,6 +39,8 @@ def saved_options(config, cli):
             raise ValueError(f'Invalid saved command for {tool}')
     if args.bold_max_hits<1 or args.bold_search_max_hits<args.bold_max_hits:
         raise ValueError('Invalid saved BOLD search limits')
+    if args.coi_min_bp < 1 or not 0 <= args.coi_identity <= 100 or not 0 < args.coi_coverage <= 1:
+        raise ValueError('Invalid COI length, identity or coverage')
     return args,commands
 
 
@@ -225,6 +227,7 @@ def postprocess(root,cli):
                     if decision.get('validation_error'):
                         raise ValueError(decision['validation_error'])
                     summary['bold_recheck_status']='completed'
+                    summary['bold_recheck_options']=decision.get('alignment_thresholds', {})
                     summary['bold_recheck_reason']=decision['reason']
                     candidate['target_status']=decision['status']
                     candidate['target_reason']=decision['reason']
@@ -313,6 +316,9 @@ def main(argv=None):
     parser.add_argument('--bold-metadata',type=Path)
     parser.add_argument('--bold-max-hits',type=int)
     parser.add_argument('--bold-search-max-hits',type=int)
+    parser.add_argument('--coi-min-bp',type=int)
+    parser.add_argument('--coi-identity',type=float)
+    parser.add_argument('--coi-coverage',type=float)
     parser.add_argument('--threads',type=int)
     parser.add_argument('--annotation-timeout',type=float)
     parser.add_argument('--config',type=Path)

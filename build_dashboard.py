@@ -13,6 +13,8 @@ import math
 from pathlib import Path
 import re
 from urllib.parse import quote, unquote
+from report_evidence import (read_annotation, fasta_records, core_gene_counts,
+                             distinct_files, coi_support)
 
 GRAPH_NODES = 240
 GRAPH_EDGES = 720
@@ -187,37 +189,9 @@ def parse_graph(path, root, node_limit=GRAPH_NODES, edge_limit=GRAPH_EDGES):
     return result
 
 
-def annotations(path, length, root):
-    result = {'file': relative_file(path, root), 'features': [], 'warnings': []}
-    if path is None:
-        return result
-    with path.open(errors='replace') as handle:
-        for line in handle:
-            if line.startswith('##FASTA'):
-                break
-            if not line.strip() or line.startswith('#'):
-                continue
-            fields = line.rstrip('\n').split('\t')
-            if len(fields) != 9:
-                continue
-            start, end = number(fields[3]), number(fields[4])
-            if start is None or end is None or start < 1 or end < start:
-                result['warnings'].append('Malformed feature coordinates were omitted.')
-                continue
-            if length and end > length:
-                result['warnings'].append('Some feature coordinates exceed the displayed sequence length; those features were omitted.')
-                continue
-            attrs = {key: unquote(value) for item in fields[8].split(';') if '=' in item for key, value in [item.split('=', 1)]}
-            result['features'].append({'sequence_id': fields[0], 'type': fields[2], 'start': int(start), 'end': int(end),
-                'strand': fields[6], 'gene': attrs.get('Name') or attrs.get('gene') or attrs.get('gene_id') or attrs.get('ID', fields[2]),
-                'product': attrs.get('product', ''), 'source': fields[1]})
-            if len(result['features']) >= FEATURE_LIMIT:
-                result['warnings'].append(f'Annotation preview is limited to {FEATURE_LIMIT} features; download the full GFF.')
-                break
-    if len({feature['sequence_id'] for feature in result['features']}) > 1:
-        result['warnings'].append('Annotations contain multiple sequence IDs; the gene map is disabled to avoid mixing contigs.')
-        result['multiple_sequences'] = True
-    result['warnings'] = list(dict.fromkeys(result['warnings']))
+def annotations(path, length, root, circular=False, sequence=''):
+    result = read_annotation(path, length, circular, sequence, FEATURE_LIMIT)
+    result['file'] = relative_file(path, root)
     return result
 
 
@@ -245,9 +219,11 @@ def coi_matches(evidence, raw):
     hits = []
     for hit in rows:
         meta = hit.get('metadata') or metadata.get(hit.get('sseqid'), {})
+        shorter = min(number(hit.get('qlen')) or 0, number(hit.get('slen')) or 0)
         hits.append({'subject': hit.get('sseqid', ''), 'bitscore': number(hit.get('bitscore')),
                      'taxon': meta.get('taxon', ''), 'lineage': meta.get('lineage', ''),
                      'identity': number(hit.get('pident')), 'aligned_bp': number(hit.get('length')),
+                     'coverage': min(1, (number(hit.get('length')) or 0)/shorter) if shorter else None,
                      'record': meta.get('processid') or hit.get('sseqid', '')})
     return hits, count
 
@@ -337,32 +313,29 @@ def collect_sample(sample, root):
         if gff:
             recorded=first([Path(gff),sample/'MitoLooper'/Path(gff).name],root)
             annotation=recorded or annotation
-    gene_data = annotations(annotation, length, root)
+    selected_records = fasta_records(selected)
+    mitochondrial_nt = next(iter(selected_records.values()), '') if len(selected_records) == 1 else ''
+    gene_data = annotations(annotation, length, root, bool(summary.get('circular')), mitochondrial_nt)
+    annotation_input = first([sample/'MitoLooper/annotation_input.fasta'], root)
+    if annotation_input:
+        annotation_sequences = list(fasta_records(annotation_input).values())
+        if annotation_sequences != [mitochondrial_nt]:
+            gene_data['features'] = []
+            warnings.append('Annotation input differs from the selected sequence')
     cells, loci = summarize_itsme(sample, summary)
     report = first_file(sample, ['master_summary.csv', 'master_summary.tsv'])
     native_rows = {row.get('contig', row.get('locus', '')): row for row in read_table(report)}
+    its_nt = fasta_records(first_file(sample, ['reported_loci.fasta', 'complete_rDNA_loci.fasta']))
     for locus in loci:
         native = native_rows.get(locus['locus'], {})
         locus['regions'] = [{'name': region, 'start': positions[0], 'end': positions[1]}
             for region in ['SSU', 'ITS1', '5.8S', 'ITS2', 'LSU']
             for positions in [interval(native.get(region+'_coordinates'), locus.get('locus_length_bp'))] if positions]
         locus.pop('source_report', None)
+        locus['sequence'] = its_nt.get(locus['locus'], '')
+        for region in locus['regions']:
+            region['sequence'] = locus['sequence'][region['start']-1:region['end']]
     graphs = {'ITSME': [], 'MitoLooper': []}
-    for branch in graphs:
-        paths = sorted(set((sample/branch).glob('*.gfa')) | set((sample/branch).glob('*.fastg')) | set((sample/branch).glob('*.gfa2')))
-        # Compatibility with old compact files that have not yet been reorganized.
-        if not paths:
-            paths = [path for path in sorted((sample/'final').glob('*')) if path.suffix in {'.gfa', '.gfa2', '.fastg'}
-                     and (path.name.startswith('itsme_') == (branch == 'ITSME'))]
-        for path in paths:
-            if not inside(path, root):
-                continue
-            try:
-                graph = parse_graph(path, root)
-                graph['scope'] = 'Whole-genome graph; not specific to the selected mitogenome' if path.name.startswith('wgs_') else 'Assembly-method graph; may include alternative or off-target paths'
-                graphs[branch].append(graph)
-            except (ValueError, OSError) as error:
-                warnings.append(f'{path.name}: graph unavailable ({type(error).__name__})')
     best_candidate = summary.get('best_candidate') or {}
     evidence = {}
     candidate_id = best_candidate.get('candidate_id', '')
@@ -385,22 +358,34 @@ def collect_sample(sample, root):
         its_cassette = None
     logs = [item for path in sorted((sample/'logs').glob('*')) if path.suffix in {'.log', '.err'}
             for item in [relative_file(path, root)] if item]
-    result = {'id': name, 'expected_taxon': summary.get('target_taxon', ''),
+    config = read_json(sample/'run_config.json', warnings)
+    evidence.setdefault('alignment_thresholds', {}).setdefault('near_best_fraction', config.get('options', {}).get('bold_near_fraction', .02))
+    saved_sample = config.get('sample') or {}
+    taxonomy = summary.get('taxonomy') or (saved_sample.get('taxonomy', {}) if isinstance(saved_sample, dict) else {})
+    gene_rows = read_table(first([sample/'MitoLooper/gene_recovery.csv', sample/'final/gene_recovery.csv'], root))
+    counts = core_gene_counts(best_candidate, gene_rows)
+    counts['source'] = 'Reference screen'
+    if gene_data['features'] and not gene_data.get('multiple_sequences') and summary.get('annotation_ok') is not False:
+        counts = core_gene_counts({'genes_found': [feature['gene'] for feature in gene_data['features'] if feature['type'] == 'CDS'],
+                                   'rrnas_found': [feature['gene'] for feature in gene_data['features'] if feature['type'] == 'rRNA']})
+        counts['source'] = 'MITOS annotation'
+    result = {'id': name, 'expected_taxon': summary.get('target_taxon', ''), 'expected_taxonomy': taxonomy,
             'status': summary.get('status', 'unknown'), 'pipeline': summary.get('pipeline', 'both'),
             'summary_file': relative_file(summary_path, root), 'warnings': warnings,
             'mito': {'length': length, 'accepted': bool(accepted), 'sequence': relative_file(selected, root),
                 'circular': summary.get('circular'), 'method': summary.get('winning_method') or summary.get('best_method', ''),
                 'genes_recovered': summary.get('genes_recovered'), 'genes_expected': summary.get('genes_expected'),
+                'core_genes': counts, 'reference_genes': gene_rows,
                 'complete_by_reference': summary.get('complete_by_reference'), 'target_status': summary.get('target_status', 'unresolved'),
                 'annotation_ok': summary.get('annotation_ok'), 'annotation_status': summary.get('annotation_status',''),
                 'annotation_scope':summary.get('annotation_scope',''), 'target_reason':summary.get('target_reason') or evidence.get('reason',''), 'annotation': gene_data, 'hits': hits,
-                'reference_taxa': [], 'hit_count': hit_count,
+                'reference_taxa': [], 'hit_count': hit_count, 'bold_evidence': evidence,
                 'raw_hits_file': relative_file(raw, root),
                 'evidence_file': relative_file(sample/'candidates'/candidate_id/'bold_evidence.json', root) if candidate_id else None,
-                'files': mito_files, 'graphs': graphs['MitoLooper']},
+                'files': distinct_files(mito_files, root), 'graphs': graphs['MitoLooper']},
             'its': {'status': cells.get('itsme_reporting_status'), 'run_status':cells.get('itsme_run_status'),
                     'partial_count':cells.get('itsme_partial_locus_count'), 'diagnostic_reason':cells.get('itsme_diagnostic_reason'), 'count': cells.get('itsme_complete_locus_count'),
-                    'loci': loci, 'files': its_files, 'graphs': graphs['ITSME'],
+                    'loci': loci, 'files': distinct_files(its_files, root), 'graphs': graphs['ITSME'],
                     'summary_file': relative_file(report, root),
                     'sequence': relative_file(its_sequence, root), 'cassette_sequence': relative_file(its_cassette, root)},
             'qc': {'reads_before': before.get('total_reads'), 'reads_after': after.get('total_reads'),
@@ -416,12 +401,14 @@ def collect_sample(sample, root):
         result['mito'].update(length=None, accepted=False, sequence=None, circular=None, method='',
                               genes_recovered=None, genes_expected=None, target_status='unresolved',
                               complete_by_reference=None, annotation_ok=None, hits=[], reference_taxa=[], hit_count=0)
+        result['mito']['core_genes'] = {'cds':None, 'rrna':None, 'extra':[], 'source':'Unavailable'}
+        result['mito']['reference_genes'] = []
         result['mito']['annotation']['features'] = []
-        result['its'].update(status='not_run', count=None, loci=[])
+        result['its'].update(status='not_run', run_status='not_run', count=None, loci=[])
     return result
 
 
-def build_data(root, title=None, bold_metadata=None):
+def build_data(root, title=None, bold_metadata=None, export_graphs=False):
     root = Path(root).absolute()
     samples, metadata_sources = [], []
     for sample in sorted(root.iterdir()):
@@ -432,6 +419,31 @@ def build_data(root, title=None, bold_metadata=None):
     if not samples:
         raise ValueError('No saved Tortuga sample summaries found in this directory')
     resolve_coi_names(samples, metadata_sources)
+    from graph_evidence import report_graphs
+    for sample in samples:
+        mito = sample['mito']
+        confidence_evidence = dict(mito['bold_evidence'])
+        if mito['hit_count'] > len(mito['hits']) and mito['hits']:
+            high, low = mito['hits'][0]['bitscore'], mito['hits'][-1]['bitscore']
+            fraction = confidence_evidence.get('alignment_thresholds', {}).get('near_best_fraction', .02)
+            if high is None or low is None or low >= (1-fraction)*high:
+                confidence_evidence['near_best_truncated'] = True
+        mito['confidence'] = coi_support(mito['hits'], confidence_evidence)
+        graphs = report_graphs(root/sample['id'], root, sample, export_graphs)
+        mito['graphs'], sample['its']['graphs'] = graphs['MitoLooper'], graphs['ITSME']
+        its_taxa = {locus['locus']: locus['taxon'] for locus in sample['its']['loci']}
+        for graph in sample['its']['graphs']:
+            for node in graph['nodes']:
+                node['taxa'] = sorted({its_taxa.get(locus, '') for locus in node['loci']} - {''})
+        for graph in mito['graphs']:
+            for node in graph['nodes']:
+                node['taxa'] = [mito['confidence']['taxon']] if mito['confidence']['taxon'] else mito['reference_taxa']
+                node['taxonomy_scope'] = 'Assembly COI match' if mito['confidence']['taxon'] else 'Closest COI references'
+        for branch in [mito, sample['its']]:
+            branch['files'] = [item for item in branch['files'] if Path(item['name']).suffix.lower() not in {'.gfa', '.gfa2', '.fastg'}]
+        mito['files'] = [item for item in mito['files'] if Path(item['name']).suffix.lower() not in {'.fasta', '.fa', '.fna'}
+                         or item['name'] in {'accepted_candidate.fasta', 'best_sequence.fasta', 'circular_target_candidate.fasta'}
+                         or item['name'].startswith('mitos_')]
     return {'title': title or root.name, 'built': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'samples': samples, 'files': [item for name in ['cohort_summary.csv', 'cohort_its_loci.csv', 'cohort_gene_recovery.csv', 'reference_selection.tsv']
                                         for item in [relative_file(root/name, root)] if item]}
@@ -443,7 +455,7 @@ def write_dashboard(root, title=None, bold_metadata=None):
     target, temporary = root/'dashboard.html', root/'dashboard.html.tmp'
     if target.is_symlink() or temporary.is_symlink():
         raise ValueError('Refusing a linked dashboard output')
-    data = build_data(root, title, bold_metadata)
+    data = build_data(root, title, bold_metadata, export_graphs=True)
     assets = Path(__file__).parent/'dashboard_assets'
     template = (assets/'dashboard.html').read_text()
     payload = json.dumps(data, ensure_ascii=True, allow_nan=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
