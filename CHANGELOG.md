@@ -1,3 +1,13 @@
+# Unreleased
+
+- Simplify dashboard captions and metric notes. Keep target-check reasons,
+  acceptance and exploratory annotation scope in collapsed Taxonomic evidence.
+  Distinguish observed top COI reference names from confirmed target identity;
+  do not repeat the expected name as an unresolved prediction.
+- Link failed/timed-out Run record statuses directly to retained native logs.
+  Preserve relative downloads after relocating results; leave missing logs
+  unlinked and refuse paths outside the sample.
+
 # 2.3.1 - 2026-11-19
 
 - Create MITOS's output directory before invoking runmitos.py. Fix the native

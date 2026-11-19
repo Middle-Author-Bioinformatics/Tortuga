@@ -55,7 +55,7 @@ function viewSwitch(labels) {
   return el('div', {class: 'view-switch', 'aria-label': 'Assembly display'}, labels.map(([key, label]) => el('button', {class: state.mode === key ? 'active' : '', 'aria-pressed': String(state.mode === key), onclick: () => {state.mode = key; renderView();}}, label)));
 }
 function mapSequence(length, features, regionMap = false) {
-  if (!length || !features.length) return empty(regionMap ? 'No region coordinates available' : 'No annotation map available', regionMap ? 'Use the retained ITSME sequences and taxonomy tables below.' : 'The retained FASTA may still be available. MITOS annotations are shown when produced.');
+  if (!length || !features.length) return empty(regionMap ? 'No region coordinates available' : 'No annotation map available', '');
   const panel = el('div', {class: 'sequence-panel'});
   const drawing = svg('svg', {class: 'genome-map', viewBox: '0 0 940 174', role: 'group', 'aria-label': regionMap ? 'ITS locus regions on a base-pair coordinate axis' : 'Mitochondrial features on an unrolled base-pair coordinate axis'});
   const scale = position => 45 + (position-1)/length*850;
@@ -68,7 +68,7 @@ function mapSequence(length, features, regionMap = false) {
   if (!regionMap) {
     for (const [label, y] of [['+', 67], ['−', 119]]) {const text = svg('text', {x: 20, y, class: 'tick'}); text.textContent = label; drawing.append(text);}
   }
-  const readout = el('div', {class: 'feature-readout', 'aria-live': 'polite'}, 'Select a feature to see its coordinates.');
+  const readout = el('div', {class: 'feature-readout', 'aria-live': 'polite'}, 'Select a feature');
   const colors = regionMap ? {'SSU': '#587c69', 'ITS1': '#96d1b1', '5.8S': '#d4b477', 'ITS2': '#96d1b1', 'LSU': '#587c69'} : {CDS: '#96d1b1', rRNA: '#d4b477', tRNA: '#b7a1ce'};
   for (const feature of features) {
     const name = regionMap ? feature.name : feature.gene;
@@ -85,7 +85,7 @@ function mapSequence(length, features, regionMap = false) {
   return panel;
 }
 function renderGraph(graphs, host) {
-  if (!graphs.length) {host.append(empty('No assembly graph retained', 'A final FASTA does not imply that an assembly graph was produced. Available sequence downloads are listed below.')); return;}
+  if (!graphs.length) {host.append(empty('No assembly graph retained', '')); return;}
   const select = el('select', {'aria-label': 'Assembly graph file'}, graphs.map((graph, index) => el('option', {value: index}, graph.file.name)));
   const zoomIn = el('button', {'aria-label': 'Zoom in'}, '+'), zoomOut = el('button', {'aria-label': 'Zoom out'}, '−'), reset = el('button', {'aria-label': 'Fit graph'}, 'Fit');
   const tools = el('div', {class: 'graph-tools'}, select, el('div', {class: 'graph-buttons'}, zoomOut, zoomIn, reset));
@@ -104,12 +104,12 @@ function renderGraph(graphs, host) {
       const path = edge.source === edge.target ? `M ${start} ${a.y} C ${a.x+100} ${a.y-100}, ${a.x-100} ${a.y-100}, ${end} ${b.y}` : `M ${start} ${a.y} C ${(start+end)/2} ${a.y}, ${(start+end)/2} ${b.y}, ${end} ${b.y}`;
       const curve = svg('path', {class: 'link', d: path}); const title = svg('title'); title.textContent = `${edge.source}${edge.source_strand} → ${edge.target}${edge.target_strand}${edge.overlap ? ' · overlap '+edge.overlap : ''}`; curve.append(title); pane.append(curve);
     }
-    const readout = el('div', {class: 'graph-readout', 'aria-live': 'polite'}, 'Drag to pan · scroll to zoom · select a segment. Graph positions are a layout, not genomic coordinates.');
+    const readout = el('div', {class: 'graph-readout', 'aria-live': 'polite', title: 'Graph positions and segment widths are schematic.'}, 'Drag to pan · scroll to zoom · select a segment');
     for (const node of graph.nodes) {
       const group = svg('g', {class: 'segment', transform: `translate(${node.x} ${node.y})`, tabindex: 0, role: 'button', 'aria-label': 'Segment '+node.id});
       group.append(svg('rect', {x: -34, y: -13, width: 68, height: 26, rx: 8}));
       const text = svg('text', {'text-anchor': 'middle', y: 4}); text.textContent = node.id.length > 9 ? node.id.slice(0, 8)+'…' : node.id; group.append(text);
-      const choose = () => {pane.querySelectorAll('.chosen').forEach(item => item.classList.remove('chosen')); group.classList.add('chosen'); readout.textContent = `Segment ${node.id} · ${fmt(node.length)} bp · coverage ${exists(node.coverage) ? fmt(node.coverage)+'×' : 'not recorded'}. Segment width is schematic; use these values for length.`;};
+      const choose = () => {pane.querySelectorAll('.chosen').forEach(item => item.classList.remove('chosen')); group.classList.add('chosen'); readout.textContent = `Segment ${node.id} · ${fmt(node.length)} bp · coverage ${exists(node.coverage) ? fmt(node.coverage)+'×' : 'not recorded'}`;};
       group.addEventListener('click', choose); group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); choose();}}); pane.append(group);
     }
     let tx = 0, ty = 0, scale = 1;
@@ -132,16 +132,15 @@ function renderGraph(graphs, host) {
 function mitoView(sample) {
   const mito = sample.mito, root = document.createDocumentFragment();
   root.append(metrics([
-    [mito.accepted ? 'Accepted assembly' : 'Best candidate', fmt(mito.length), 'bp', mito.accepted ? 'Meets the configured stopping policy' : 'May be partial or unresolved'],
-    ['Topology', mito.circular === true ? 'Circular' : mito.circular === false ? 'Unclosed' : 'Unknown', '', 'Assembly evidence'],
-    ['Reference genes', exists(mito.genes_expected) ? `${fmt(mito.genes_recovered)} / ${fmt(mito.genes_expected)}` : 'Unknown', '', mito.complete_by_reference ? 'Reference-gene screen passed' : 'Homology recovery; not tRNA completeness'],
-    ['Recovery method', mito.method ? methodName(mito.method) : '—', '', human(sample.status)]
+    [mito.accepted ? 'Accepted assembly' : 'Best candidate', fmt(mito.length), 'bp'],
+    ['Topology', mito.circular === true ? 'Circular' : mito.circular === false ? 'Unclosed' : 'Unknown'],
+    ['Reference genes', exists(mito.genes_expected) ? `${fmt(mito.genes_recovered)} / ${fmt(mito.genes_expected)}` : 'Unknown'],
+    ['Recovery method', mito.method ? methodName(mito.method) : '—']
   ]));
-  root.append(el('div', {class: 'section-head'}, el('div', {}, el('h3', {}, state.mode === 'graph' ? 'Assembly topology' : 'The mitochondrial sequence'), el('p', {}, state.mode === 'graph' ? 'Inspect the retained assembly-method graph.' : mito.circular ? 'Circular assembly, shown unrolled from its reported origin.' : 'Reported sequence coordinates.')), viewSwitch([['map', 'Sequence & genes'], ['graph', 'Assembly graph']])));
+  root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'Assembly topology' : 'Mitochondrial sequence'), viewSwitch([['map', 'Sequence & genes'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
   if (state.mode === 'graph') renderGraph(mito.graphs, host);
   else {
-    if(mito.annotation_scope==='exploratory_candidate') host.append(el('p',{class:'note warning'},'Exploratory MITOS annotation of the retained candidate. Its identity and acceptance status remain separate.'));
     const features = mito.annotation.features;
     const types = new Set(['CDS', 'rRNA', 'tRNA', 'ncRNA']);
     const selected = features.some(feature => types.has(feature.type)) ? features.filter(feature => types.has(feature.type)) : features.filter(feature => feature.type === 'gene');
@@ -150,35 +149,44 @@ function mitoView(sample) {
     mito.annotation.warnings.forEach(message => host.append(el('p', {class: 'note warning'}, message)));
   }
   const supported = mito.target_status === 'confirmed_target';
-  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'COI / BOLD target check'), el('p', {}, supported ? 'Supported at the requested taxon' : human(mito.target_status)), sample.expected_taxon ? el('em', {}, sample.expected_taxon) : null, mito.target_reason ? el('small',{},mito.target_reason) : null, el('small', {}, 'This checks the supplied identity. It is not an independent deepest-rank taxonomic prediction.')),
-    el('div', {}, el('h4', {}, 'Sequence interpretation'), el('p', {}, mito.accepted ? 'Accepted under this run’s policy' : mito.sequence ? 'Candidate retained for review' : 'No sequence recovered'), el('small', {}, 'Circularity, reference-gene recovery and COI agreement are separate evidence. They do not establish every tRNA or exclude every chimera.'))));
+  const taxa = mito.reference_taxa || [];
+  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, supported ? 'COI-supported identity' : 'Top COI reference match'), el('em', {}, supported ? sample.expected_taxon || 'Target confirmed' : taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : 'Not assigned'))));
   root.append(el('div', {class: 'file-line'}, link(mito.sequence, mito.accepted ? 'Download accepted FASTA ↓' : 'Download candidate FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
   if (mito.annotation.features.length) root.append(details(`Annotation table · ${mito.annotation.features.length} feature records`, table(['Gene / feature', 'Type', 'Start', 'End', 'Strand', 'Product'], mito.annotation.features.map(feature => [feature.gene, feature.type, fmt(feature.start), fmt(feature.end), feature.strand, feature.product]))));
-  if (mito.hits.length) root.append(details('Supporting COI reference records', table(['BOLD record', 'Reference taxon', 'Identity', 'Aligned bp'], mito.hits.map(hit => [hit.record, hit.taxon, fmt(hit.identity)+'%', fmt(hit.aligned_bp)]))));
+  root.append(details('Taxonomic evidence', el('div', {},
+    table(['Check', 'Result'], [
+      ['BOLD target check', human(mito.target_status)],
+      ['Reason', mito.target_reason],
+      ['Annotation', mito.annotation_scope === 'exploratory_candidate' ? 'Exploratory MITOS annotation' : human(mito.annotation_status)],
+      ['Assembly acceptance', mito.accepted ? 'Accepted' : 'Not accepted']
+    ]),
+    mito.hits.length ? table(['BOLD record', 'Reference taxon', 'Identity', 'Aligned bp'], mito.hits.map(hit => [hit.record, hit.taxon, fmt(hit.identity)+'%', fmt(hit.aligned_bp)])) : null,
+    mito.hit_count > mito.hits.length ? el('p', {class: 'subtle'}, `${mito.hits.length} of ${fmt(mito.hit_count)} records shown`) : null,
+    link(mito.evidence_file, 'Full BOLD evidence ↓'))));
   if (mito.files.length) root.append(fileList(mito.files));
   return root;
 }
 function itsView(sample) {
   const its = sample.its, root = document.createDocumentFragment();
-  root.append(el('p',{class:'note'},`ITSME execution: ${human(its.run_status)}${exists(its.partial_count)?' · '+fmt(its.partial_count)+' partial loci':''}${its.diagnostic_reason?' · '+its.diagnostic_reason:''}`));
+  if (its.diagnostic_reason) root.append(details('ITSME diagnostics', el('p', {class: 'note'}, its.diagnostic_reason)));
   const index = Math.min(state.locus, Math.max(0, its.loci.length-1)), locus = its.loci[index];
   root.append(metrics([
-    ['Reported complete loci', fmt(its.count), '', human(its.status)],
-    ['Selected ITS cassette', locus ? fmt(locus.its_length_bp) : '—', 'bp', 'ITS1 · 5.8S · ITS2'],
-    ['Full rDNA locus', locus ? fmt(locus.locus_length_bp) : '—', 'bp', 'Includes the reported rRNA flanks'],
-    ['Consensus resolution', locus?.taxonomy_rank ? human(locus.taxonomy_rank) : 'Unknown', '', 'From native ITSME consensus evidence']
+    ['Complete loci', fmt(its.count)],
+    ['ITS cassette', locus ? fmt(locus.its_length_bp) : '—', 'bp'],
+    ['Full rDNA locus', locus ? fmt(locus.locus_length_bp) : '—', 'bp'],
+    ['Consensus resolution', locus?.taxonomy_rank ? human(locus.taxonomy_rank) : 'Unknown']
   ]));
   if (its.loci.length) {
     const select = el('select', {'aria-label': 'Reported ITS locus', onchange: event => {state.locus = Number(event.target.value); renderView();}}, its.loci.map((entry, i) => el('option', {value: i, selected: i === index ? '' : null}, entry.locus)));
     root.append(el('label', {class: 'locus-select'}, 'Reported locus', select));
   }
-  root.append(el('div', {class: 'section-head'}, el('div', {}, el('h3', {}, state.mode === 'graph' ? 'The rDNA assembly graph' : 'The reconstructed rDNA locus'), el('p', {}, state.mode === 'graph' ? 'The graph may contain several loci or alternative paths.' : 'Flanking rRNA anchors and the intervening ITS cassette.')), viewSwitch([['map', 'Locus map'], ['graph', 'Assembly graph']])));
+  root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'rDNA assembly graph' : 'Reconstructed rDNA locus'), viewSwitch([['map', 'Locus map'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
   if (state.mode === 'graph') renderGraph(its.graphs, host);
   else if (locus) host.append(mapSequence(locus.locus_length_bp || Math.max(0, ...locus.regions.map(region => region.end)), locus.regions, true));
   else host.append(empty(its.status === 'not_requested' ? 'ITSME not requested' : ['missing_report','unsupported_report','failed_no_report','not_run'].includes(its.status) ? 'ITSME results unavailable' : 'No complete ITS locus reported', its.status === 'not_requested' ? 'ITSME was not requested for this sample.' : 'Check the run record and retained ITSME files. Partial sequences may still be present.'));
   if (locus) {
-    root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'Predicted consensus taxon'), el('em', {}, locus.taxon || 'Unresolved'), el('small', {}, `Resolution: ${locus.taxonomy_rank || 'not recorded'} · ${human(locus.taxonomy_status)}`)), el('div', {}, el('h4', {}, 'Reported cassette lengths'), el('p', {}, `ITS1 ${fmt(locus.its1_length_bp)} bp · 5.8S ${fmt(locus.five_8s_length_bp)} bp · ITS2 ${fmt(locus.its2_length_bp)} bp`), el('small', {}, 'Reported complete loci are kept distinct. Missing assignments are not replaced with the expected sample identity.'))));
+    root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, 'Predicted consensus taxon'), el('em', {title: human(locus.taxonomy_status)}, locus.taxon || 'Not assigned')), el('div', {}, el('h4', {}, 'Cassette lengths'), el('p', {}, `ITS1 ${fmt(locus.its1_length_bp)} bp · 5.8S ${fmt(locus.five_8s_length_bp)} bp · ITS2 ${fmt(locus.its2_length_bp)} bp`))));
     if (locus.consensus_taxonomy) root.append(el('p', {class: 'lineage'}, el('strong', {}, 'Consensus lineage  '), locus.consensus_taxonomy));
   }
   root.append(el('div', {class: 'file-line'}, link(its.sequence, its.sequence?.name.includes('complete_ITS') ? 'ITS cassette FASTA ↓' : 'rDNA loci FASTA ↓', true), its.cassette_sequence?.href !== its.sequence?.href ? link(its.cassette_sequence, 'ITS cassette FASTA') : null, link(its.summary_file, 'ITSME results table')));
@@ -187,12 +195,16 @@ function itsView(sample) {
 }
 function runView(sample) {
   const root = document.createDocumentFragment(), qc = sample.qc;
-  root.append(metrics([['Input reads', fmt(qc.reads_before), '', 'fastp total reads; not read pairs'], ['Retained reads', fmt(qc.reads_after), '', exists(qc.reads_before) && qc.reads_before > 0 && exists(qc.reads_after) ? fmt(qc.reads_after/qc.reads_before*100)+'% retained' : 'QC report may be unavailable'], ['Q30 after QC', exists(qc.q30_after) ? fmt(qc.q30_after*100)+'%' : '—', '', 'Fraction of retained bases'], ['Recorded stages', fmt(sample.stages.length), '', human(sample.pipeline)+' pipeline']]));
-  root.append(el('p', {class: 'run-intro'}, 'A successful tool invocation is separate from biological recovery. Failed or timed-out stages remain visible even when another method produced an accepted sequence.'));
+  root.append(metrics([['Input reads', fmt(qc.reads_before)], ['Retained reads', fmt(qc.reads_after), '', exists(qc.reads_before) && qc.reads_before > 0 && exists(qc.reads_after) ? fmt(qc.reads_after/qc.reads_before*100)+'% retained' : ''], ['Q30 after QC', exists(qc.q30_after) ? fmt(qc.q30_after*100)+'%' : '—'], ['Recorded stages', fmt(sample.stages.length)]]));
   root.append(el('div', {class: 'progress-track', 'aria-hidden': 'true'}, sample.stages.map(stage => el('div', {class: stage.status.toLowerCase(), title: stage.stage+': '+stage.status}))));
-  if (sample.stages.length) root.append(table(['Stage', 'Status', 'Time', 'Note'], sample.stages.map(stage => [human(stage.stage), el('span', {class: 'stage-status '+stage.status.toLowerCase()}, human(stage.status)), numberTime(stage.elapsed_seconds), stage.reason])));
+  if (sample.stages.length) root.append(table(['Stage', 'Status', 'Time', 'Note'], sample.stages.map(stage => {
+    const failed = ['failed', 'timeout'].includes(stage.status.toLowerCase());
+    const status = failed && stage.log ? link(stage.log, human(stage.status)+' ↓') : el('span', {}, human(stage.status));
+    status.className = 'stage-status '+stage.status.toLowerCase();
+    if (failed && stage.log) status.setAttribute('aria-label', `Download ${human(stage.stage)} ${human(stage.status)} log`);
+    return [human(stage.stage), status, numberTime(stage.elapsed_seconds), stage.reason];
+  })));
   else root.append(empty('No stage table available', 'Use the saved sample summary and native logs below.'));
-  sample.warnings.forEach(message => root.append(el('p', {class: 'note warning'}, message)));
   root.append(el('div', {class: 'file-line'}, link(qc.report, 'Open QC report'), link(sample.summary_file, 'Sample summary')));
   if (sample.logs.length) root.append(fileList(sample.logs, 'Native logs'));
   return root;

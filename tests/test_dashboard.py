@@ -177,3 +177,59 @@ def test_explicit_nonacceptance_and_empty_its_do_not_get_primary_accepted_downlo
     assert not data['mito']['accepted']
     assert data['mito']['sequence']['name'] == 'best_sequence.fasta'
     assert data['its']['sequence'] is None
+
+
+def test_stage_log_links_follow_recorded_paths_and_survive_relocation(tmp_path):
+    from compact_outputs import table
+    root = make_demo(tmp_path/'original', samples=1)
+    sample = root/'W30877'
+    put(sample/'logs/native error.log', 'native failure\n')
+    stages = [
+        {'stage': 'mitos2', 'status': 'failed', 'log': str(sample/'logs/native error.log')},
+        {'stage': 'wgs', 'status': 'timeout', 'log': 'logs/wgs.log'},
+        {'stage': 'missing', 'status': 'failed'},
+    ]
+    table(sample/'stages.tsv', stages, ['stage', 'status', 'log'])
+    moved = tmp_path/'moved'
+    shutil.move(root, moved)
+    data = payload(d.write_dashboard(moved))['samples'][0]
+    assert data['stages'][0]['log']['href'] == 'W30877/logs/native%20error.log'
+    assert data['stages'][1]['log']['href'] == 'W30877/logs/wgs.log'
+    assert data['stages'][2]['log'] is None
+    for stage in data['stages'][:2]:
+        assert (moved/unquote(stage['log']['href'])).is_file()
+
+
+def test_stage_logs_do_not_link_outside_sample(tmp_path):
+    root = make_demo(tmp_path/'results', samples=2)
+    sample = root/'W30877'
+    outside = put(tmp_path/'private.log', 'outside\n')
+    (sample/'logs/linked.log').symlink_to(outside)
+    for recorded in [str(outside), '../W30882/logs/wgs.log', 'logs/linked.log']:
+        assert d.stage_log({'stage': 'missing', 'log': recorded}, sample, root) is None
+
+
+def test_matching_reference_name_does_not_override_unresolved_target_check(tmp_path):
+    root = make_demo(tmp_path/'results', samples=1)
+    sample = root/'W30877'
+    summary = json.loads((sample/'final/summary.json').read_text())
+    summary.update(target_status='unresolved', accepted_by_policy=False)
+    atomic_json(sample/'final/summary.json', summary)
+    evidence_path = sample/'candidates/011_novoplasty_001/bold_evidence.json'
+    evidence = json.loads(evidence_path.read_text())
+    evidence['reason'] = 'Near-best BOLD records conflict at requested taxon'
+    lower = dict(evidence['hits'][0], bitscore='900', metadata={'taxon': 'Other species'})
+    tied = dict(evidence['hits'][0], metadata={'taxon': 'Tied species'})
+    evidence['hits'] = [lower, evidence['hits'][0], tied]
+    atomic_json(evidence_path, evidence)
+    data = d.build_data(root)['samples'][0]['mito']
+    assert data['reference_taxa'] == ['Rathbunixa occidentalis', 'Tied species']
+    assert data['hits'][0]['taxon'] == 'Rathbunixa occidentalis'
+    assert data['target_status'] == 'unresolved' and not data['accepted']
+    assert data['target_reason'] == evidence['reason']
+    assert json.loads((sample/'final/summary.json').read_text()) == summary
+    # Older records without scores can be listed, but cannot establish a top hit.
+    for hit in evidence['hits']:
+        hit.pop('bitscore', None)
+    atomic_json(evidence_path, evidence)
+    assert not d.build_data(root)['samples'][0]['mito']['reference_taxa']
