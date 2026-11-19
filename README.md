@@ -60,11 +60,17 @@ MitoFinder for stage 4.
 
 ## Install
 
+Prepare the reference data after installing the software:
+**[Database download and preparation guide](DATABASES.md)**. It includes complete
+commands for ITSME, GetOrganelle `animal_mt`, MITOS `refseq89m`, annotated NCBI
+mitochondrial genomes, and BOLD COI/metadata. Existing prepared Belly databases
+can be reused directly.
+
 The controller uses Python 3.10+ and Biopython. A separate orchestration environment
 avoids changing your working ITSME environment:
 
 ```bash
-cd ~/bin/MitoGenomeScanner
+cd /home/ark/MAB/bin/Tortuga
 mamba env create -f environment.yml
 conda activate mito_workflow
 ```
@@ -76,7 +82,7 @@ point the JSON command configuration at existing installations:
 ```bash
 # Skip these if the environments already exist.
 mamba create -n getorganelle -c conda-forge -c bioconda getorganelle
-conda run -n getorganelle get_organelle_config.py --add-organelle animal_mt
+conda run -n getorganelle get_organelle_config.py --add animal_mt
 mamba create -n mtgrasp -c conda-forge -c bioconda mtgrasp
 mamba create -n mitos2 -c conda-forge -c bioconda 'mitos>=2'
 ```
@@ -281,8 +287,9 @@ controller does not upload sample data to BOLD and does not call an undocumented
 online identification API. This is a BLAST comparison against BOLD-derived records,
 not the hosted BOLD identification engine.
 
-Download a suitable public BOLD TSV export or reference snapshot, then normalize
-its COI records:
+Download the sequence-and-taxonomy TSV from the official BOLD data packages page,
+then normalize its COI records. See [DATABASES.md](DATABASES.md#5-bold-coi-references-and-taxonomy)
+for the exact snapshot, required download file and full Belly preparation command:
 
 ```bash
 python prepare_bold.py /path/to/bold_export.tsv.gz \
@@ -330,27 +337,26 @@ unresolved; broaden `target_taxon` only when that is scientifically appropriate.
 
 ## Run your mitochondrial branch
 
-After filling `samples.tsv`, setting the command paths, and preparing references:
+After filling the sample sheet and following [DATABASES.md](DATABASES.md), the
+mitochondrial-only command for the current Belly paths is:
 
 ```bash
-conda activate mito_workflow
-
-bash ~/bin/MitoGenomeScanner/mito_looper.sh \
-    ~/NOAA/CA_intertidal/raw_reads \
-    --samples samples.tsv \
-    --config config.json \
-    --bold-fasta /path/to/bold_coi/coi.fasta \
-    --bold-metadata /path/to/bold_coi/metadata.tsv \
-    --mitos-refdir /path/to/MITOS2-reference-root \
-    --mitos-refseqver refseq-release-directory \
+bash /home/ark/MAB/bin/Tortuga/mito_looper.sh \
+    /home/ark/MAB/NOAA/CA_intertidal/raw_reads \
+    --samples /home/ark/MAB/NOAA/CA_intertidal/CA_intertidal_samples_full_taxonomy.tsv \
+    --genbank-dir /home/ark/MAB/NOAA/mitos_genbank \
+    --bold-fasta /home/ark/MAB/NOAA/BOLD/prepared_fixed/coi.fasta \
+    --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv \
+    --mitos-refdir /home/ark/MAB/NOAA/mitos_data \
+    --mitos-refseqver refseq89m \
     --branch mito \
-    -o ~/NOAA/CA_intertidal/mito_results \
-    -t 60 -m 200
+    -o /home/ark/MAB/NOAA/CA_intertidal/mito_results_new \
+    -t 32 -m 200
 ```
 
-Use your actual MITOS2 reference release folder name, not the literal placeholder.
-Download/extract its reference data separately using the MITOS2 project's reference
-data instructions. The specified release must exist under `--mitos-refdir`.
+On another host, substitute its paths and use `--config /path/to/config.json`
+when explicit command mappings are needed. The MITOS release must already be
+extracted below `--mitos-refdir` as shown in the database guide.
 
 This command discovers all sample pairs, so an additional `for` loop is unnecessary.
 It accepts your `W30877_1.fq.gz` / `W30877_2.fq.gz` names as well as common Illumina
