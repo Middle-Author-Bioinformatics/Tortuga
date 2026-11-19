@@ -62,22 +62,40 @@ production dependencies are required beyond the existing Python environment.
 ## Updated assessment labels (2.3.0)
 
 The MITOS map can now represent an exploratory annotation of an unclosed or
-unresolved candidate. Its scope is labeled; annotation does not establish target
-identity or acceptance. BOLD reasons are retained in the saved evidence and
+unresolved candidate. Its scope is saved in the evidence files; annotation does
+not establish target identity or acceptance. BOLD reasons are retained in the saved evidence and
 cohort summary. In the ITS view, the badge reports **ITSME execution**, independent
 of the overall mitochondrial outcome; complete/partial locus counts remain
 separate. A successfully completed ITSME run with no complete loci is not a
 program failure.
 
-The main views show the measurements and maps without explanatory captions.
-**Taxonomic evidence** holds the target-check status, its recorded reason,
-annotation scope and supporting BOLD records. When target confirmation is still
-unresolved, the main taxon label shows **Top COI reference match**, using the
-highest-scoring retained qualifying BOLD records (including tied names). It never
-substitutes the expected name. Confirmed checks show **COI-supported identity**.
-A matching reference name can coexist with an unresolved check because other
-near-best hits, missing metadata or a truncated search can prevent confirmation.
-Building the dashboard preserves the saved decision; it does not rerun BOLD.
+The client-facing report shows measurements, taxonomy, maps and downloads without
+developer commentary or warning paragraphs, including inside expandable panels.
+Technical reasons and annotation scope remain in the downloadable native reports.
+**Taxonomic evidence** contains a concise target agreement result and reference
+records. Failed/timed-out stages retain their log download links.
+
+**COI reference match** uses the highest-scoring saved alignment names, including
+ties within the bounded 12-record preview, independently of whether the target
+confirmation filter accepted them. Percent identity and aligned length accompany
+the name. Known names in older evidence without scores remain visible as reference
+matches, without claiming a ranking. Confirmed checks show **COI-supported identity**.
+Expected sample names are never substituted for absent observed reference names.
+
+If confirmation saved no qualifying hits, the builder reads `bold_hits.tsv` and
+resolves the selected IDs from the BOLD metadata path saved in `run_config.json`.
+It scans each metadata TSV once per report and stores only the needed records;
+it does not load the full reference database into memory or rerun BLAST. An explicit
+path can be supplied when the saved path is unavailable:
+
+```bash
+bash /home/ark/MAB/bin/Tortuga/build_dashboard.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy \
+  --bold-metadata /home/ark/MAB/NOAA/BOLD/prepared_fixed/metadata.tsv
+```
+
+Names and match metrics are embedded in `dashboard.html` for offline sharing.
+Building the dashboard preserves the saved confirmation and acceptance decisions.
 
 ## How to interpret the views
 

@@ -7,6 +7,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 import csv
 import fcntl
+import heapq
 import json
 import math
 from pathlib import Path
@@ -17,6 +18,8 @@ GRAPH_NODES = 240
 GRAPH_EDGES = 720
 GRAPH_BYTES = 100 * 1024**2
 FEATURE_LIMIT = 3000
+BOLD_COLUMNS = 'qseqid sseqid pident length qlen slen qstart qend sstart send evalue bitscore'.split()
+BOLD_PREVIEW = 12
 
 
 def number(value):
@@ -214,7 +217,81 @@ def annotations(path, length, root):
     if len({feature['sequence_id'] for feature in result['features']}) > 1:
         result['warnings'].append('Annotations contain multiple sequence IDs; the gene map is disabled to avoid mixing contigs.')
         result['multiple_sequences'] = True
+    result['warnings'] = list(dict.fromkeys(result['warnings']))
     return result
+
+
+def coi_matches(evidence, raw):
+    """Observed reference matches are independent of the target acceptance filter."""
+    saved = evidence.get('hits', [])
+    metadata = {hit.get('sseqid'): hit.get('metadata', {}) for hit in saved if hit.get('sseqid')}
+    rows = saved
+    count = len(saved)
+    if raw:
+        with raw.open(newline='') as handle:
+            # Keep a bounded preview even for saturated searches. No sequences or
+            # full BOLD metadata database are loaded into the dashboard builder.
+            reader = csv.DictReader(handle, fieldnames=BOLD_COLUMNS, delimiter='\t')
+            count = 0
+            def valid_rows():
+                nonlocal count
+                for row in reader:
+                    if row.get('sseqid') and number(row.get('bitscore')) is not None:
+                        count += 1
+                        yield row
+            rows = heapq.nlargest(BOLD_PREVIEW, valid_rows(), key=lambda hit: number(hit.get('bitscore')))
+    else:
+        rows = sorted(saved, key=lambda hit: number(hit.get('bitscore')) or 0, reverse=True)[:BOLD_PREVIEW]
+    hits = []
+    for hit in rows:
+        meta = hit.get('metadata') or metadata.get(hit.get('sseqid'), {})
+        hits.append({'subject': hit.get('sseqid', ''), 'bitscore': number(hit.get('bitscore')),
+                     'taxon': meta.get('taxon', ''), 'lineage': meta.get('lineage', ''),
+                     'identity': number(hit.get('pident')), 'aligned_bp': number(hit.get('length')),
+                     'record': meta.get('processid') or hit.get('sseqid', '')})
+    return hits, count
+
+
+def resolve_coi_names(samples, metadata_sources):
+    """Scan each metadata TSV once, retaining only the small set of needed IDs."""
+    groups = defaultdict(list)
+    for sample, source in zip(samples, metadata_sources):
+        if source:
+            groups[Path(source)].append(sample)
+    for path, group in groups.items():
+        pending = {hit['subject'] for sample in group for hit in sample['mito']['hits']
+                   if hit['subject'] and not hit['taxon']}
+        if not pending or not path.is_file():
+            continue
+        keys = {key: subject for subject in pending for key in [subject, subject.removeprefix('lcl|')]}
+        found = {}
+        try:
+            with path.open(newline='') as handle:
+                reader = csv.DictReader(handle, delimiter='\t')
+                if not {'sequence_id', 'taxon'} <= set(reader.fieldnames or []):
+                    continue
+                for row in reader:
+                    subject = keys.get(row['sequence_id'])
+                    if subject and row.get('taxon', '').strip():
+                        found[subject] = row
+                        if len(found) == len(pending):
+                            break
+        except (OSError, csv.Error) as error:
+            for sample in group:
+                sample['warnings'].append(f'BOLD metadata lookup failed ({type(error).__name__})')
+        for sample in group:
+            for hit in sample['mito']['hits']:
+                meta = found.get(hit['subject'])
+                if meta:
+                    hit.update(taxon=meta['taxon'], lineage=meta.get('lineage', ''),
+                               record=meta.get('processid') or hit['subject'])
+    for sample in samples:
+        mito = sample['mito']
+        hits = mito['hits']
+        top = max((hit['bitscore'] for hit in hits if hit['bitscore'] is not None), default=None)
+        mito['reference_ranked'] = top is not None
+        mito['reference_taxa'] = sorted({hit['taxon'] for hit in hits if hit['taxon']
+                                        and (top is None or hit['bitscore'] == top)})
 
 
 def collect_sample(sample, root):
@@ -293,20 +370,8 @@ def collect_sample(sample, root):
         candidate_dir = sample/'candidates'/candidate_id
         if inside(candidate_dir/'bold_evidence.json', root):
             evidence = read_json(candidate_dir/'bold_evidence.json', warnings)
-    hits = []
-    evidence_hits = sorted(evidence.get('hits', []),
-                           key=lambda hit: number(hit.get('bitscore')) or 0, reverse=True)
-    top_score = number(evidence_hits[0].get('bitscore')) if evidence_hits else None
-    # Display observed reference names, never substitute the expected identity.
-    # Without scores, older evidence can supply the table but no claimed top hit.
-    reference_taxa = sorted({hit.get('metadata', {}).get('taxon', '') for hit in evidence_hits
-                             if top_score is not None and number(hit.get('bitscore')) == top_score}
-                            - {''})
-    for hit in evidence_hits[:12]:
-        meta = hit.get('metadata', {})
-        hits.append({'taxon': meta.get('taxon', ''), 'lineage': meta.get('lineage', ''),
-                     'identity': number(hit.get('pident')), 'aligned_bp': number(hit.get('length')),
-                     'record': meta.get('processid', hit.get('sseqid', ''))})
+    raw = first([sample/'candidates'/candidate_id/'bold_hits.tsv'], root) if candidate_id and '/' not in candidate_id and '\\' not in candidate_id else None
+    hits, hit_count = coi_matches(evidence, raw)
     qc_path = first([sample/'qc/fastp.json', sample/'ITSME/fastp.json'], root)
     qc = read_json(qc_path, warnings) if qc_path else {}
     qsummary = qc.get('summary', {})
@@ -329,7 +394,8 @@ def collect_sample(sample, root):
                 'complete_by_reference': summary.get('complete_by_reference'), 'target_status': summary.get('target_status', 'unresolved'),
                 'annotation_ok': summary.get('annotation_ok'), 'annotation_status': summary.get('annotation_status',''),
                 'annotation_scope':summary.get('annotation_scope',''), 'target_reason':summary.get('target_reason') or evidence.get('reason',''), 'annotation': gene_data, 'hits': hits,
-                'reference_taxa': reference_taxa, 'hit_count': len(evidence_hits),
+                'reference_taxa': [], 'hit_count': hit_count,
+                'raw_hits_file': relative_file(raw, root),
                 'evidence_file': relative_file(sample/'candidates'/candidate_id/'bold_evidence.json', root) if candidate_id else None,
                 'files': mito_files, 'graphs': graphs['MitoLooper']},
             'its': {'status': cells.get('itsme_reporting_status'), 'run_status':cells.get('itsme_run_status'),
@@ -355,26 +421,29 @@ def collect_sample(sample, root):
     return result
 
 
-def build_data(root, title=None):
+def build_data(root, title=None, bold_metadata=None):
     root = Path(root).absolute()
-    samples = []
+    samples, metadata_sources = [], []
     for sample in sorted(root.iterdir()):
         if sample.is_dir() and not sample.is_symlink() and ((sample/'final/summary.json').is_file() or (sample/'MitoLooper/summary.json').is_file()):
             samples.append(collect_sample(sample, root))
+            config = read_json(sample/'run_config.json', samples[-1]['warnings'])
+            metadata_sources.append(bold_metadata or config.get('options', {}).get('bold_metadata'))
     if not samples:
         raise ValueError('No saved Tortuga sample summaries found in this directory')
+    resolve_coi_names(samples, metadata_sources)
     return {'title': title or root.name, 'built': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'samples': samples, 'files': [item for name in ['cohort_summary.csv', 'cohort_its_loci.csv', 'cohort_gene_recovery.csv', 'reference_selection.tsv']
                                         for item in [relative_file(root/name, root)] if item]}
 
 
-def write_dashboard(root, title=None):
+def write_dashboard(root, title=None, bold_metadata=None):
     """Read saved results and replace only dashboard.html. Caller owns the run lock."""
     root = Path(root).absolute()
     target, temporary = root/'dashboard.html', root/'dashboard.html.tmp'
     if target.is_symlink() or temporary.is_symlink():
         raise ValueError('Refusing a linked dashboard output')
-    data = build_data(root, title)
+    data = build_data(root, title, bold_metadata)
     assets = Path(__file__).parent/'dashboard_assets'
     template = (assets/'dashboard.html').read_text()
     payload = json.dumps(data, ensure_ascii=True, allow_nan=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
@@ -389,7 +458,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('run_dir', type=Path, help='Completed Tortuga results directory')
     parser.add_argument('--title', help='Display title; defaults to the results directory name')
+    parser.add_argument('--bold-metadata', type=Path, help='BOLD metadata TSV; defaults to the saved run configuration')
     args = parser.parse_args(argv)
+    if args.bold_metadata is not None and not args.bold_metadata.is_file():
+        parser.error('BOLD metadata file not found: '+str(args.bold_metadata))
     root = args.run_dir.absolute()
     if root.is_symlink() or not root.is_dir():
         parser.error('Not a regular results directory')
@@ -399,7 +471,7 @@ def main(argv=None):
         except BlockingIOError:
             parser.error('The pipeline is running; retry after it stops. No dashboard was changed.')
         try:
-            path = write_dashboard(root, args.title)
+            path = write_dashboard(root, args.title, args.bold_metadata)
         except (ValueError, OSError, csv.Error) as error:
             parser.error(str(error))
     print(f'Dashboard: {path}\nOpen it in a browser. Move the entire results folder to preserve download links.')

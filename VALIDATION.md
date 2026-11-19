@@ -118,3 +118,10 @@ Dashboard refinement tests cover failed/timed-out log downloads, missing logs,
 relocated absolute log paths, sample confinement, score-ranked/tied COI reference
 names and preservation of unresolved target decisions despite matching names.
 DOM checks verify concise main views and collapsed status/reason evidence.
+
+Further client-report regressions cover names without scores, unqualified saved
+COI alignments with empty confirmation evidence, selective metadata resolution
+in one pass across samples, explicit metadata overrides and unknown names without
+substituting the expected taxon. DOM tests use repeated out-of-bounds features and
+verify that no technical warning/commentary paragraphs are rendered in assembly,
+ITS, graph, run or expanded evidence views. Native annotations remain unchanged.
