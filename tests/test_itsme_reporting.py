@@ -140,3 +140,20 @@ def test_incomplete_or_stale_sample_is_not_refreshed(tmp_path):
     os.utime(root/'run_config.json', ns=(newer, newer))
     assert r.main([str(tmp_path)]) == 0
     assert (root/'final/summary.json').read_bytes() == before
+
+
+def test_completed_itsme_with_zero_complete_loci_is_not_a_failed_run(tmp_path):
+    root=sample(tmp_path,[])
+    table(root/'ITSME/partials.csv',[{'contig':'partial1'},{'contig':'partial2'}],['contig'],',')
+    cells,rows=r.summarize_itsme(root,summary(root))
+    assert cells['itsme_run_status']=='completed'
+    assert cells['itsme_complete_locus_count']==0 and cells['itsme_partial_locus_count']==2
+    assert 'completed successfully' in cells['itsme_diagnostic_reason']
+
+
+def test_itsme_timeout_diagnosis_uses_itsme_stage_not_mito_status(tmp_path):
+    root=sample(tmp_path,[])
+    table(root/'stages.tsv',[{'stage':'itsme','status':'timeout','reason':'wall-clock limit'}],['stage','status','reason'])
+    cells,rows=r.summarize_itsme(root,{**summary(root),'itsme_ok':False})
+    assert cells['itsme_run_status']=='timeout'
+    assert cells['itsme_diagnostic_reason']=='wall-clock limit'

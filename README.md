@@ -1,4 +1,4 @@
-# Tortuga 2.2.0
+# Tortuga 2.3.0
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -50,7 +50,7 @@ There is no GNU parallel dispatch: both samples and methods run sequentially.
 | 1. Mitochondria from reads | NOVOPlasty, GetOrganelle, MitoFinder, then mtGrasp. Validate each output before trying the next method. Stop remaining read methods when a candidate meets the configured policy and target gate; the default requires circularity and all reference genes. Annotate that candidate with MITOS2 immediately. |
 | 2. ITS/rDNA | `--branch full` calls the separately installed ITSME v1.9 shell pipeline on original reads. Default `--branch mito` omits nuclear rDNA. |
 | 3. WGS assembly | metaSPAdes, with `--only-assembler`, a memory setting, wall-clock timeout, and optional percentage of reads. MEGAHIT is an alternative. This stage still runs after successful read recovery unless `--no-assembly` or `--skip-wgs-if-accepted` applies. |
-| 4. Mitochondria from assembly | If stage 1 failed to produce a passing candidate, GetOrganelle processes the metaSPAdes FASTG graph; MitoFinder then processes contigs if needed. New passing candidates go to MITOS2. |
+| 4. Mitochondria from assembly | If stage 1 failed to produce a passing candidate, GetOrganelle processes the metaSPAdes FASTG graph; MitoFinder then processes contigs if needed. New passing candidates go to MITOS2; otherwise annotate the best retained candidate after recovery finishes. |
 | Reporting | Per-sample candidate/evidence tables, all method logs and statuses, best contiguous sequence, and a cohort CSV. |
 
 The proposal's optional ABySS/SOAPdenovo2 benchmarking is not implemented; the
@@ -100,6 +100,55 @@ from the `mito_workflow` environment: unlisted tools are resolved from its PATH.
 The help probes also save tool help/version text in `tool_checks.json`. An
 installed tool returning nonzero for `-h` needs inspection, even if usable.
 Probe success checks launchability, not database validity or biological performance.
+
+## Annotate retained candidates by default (2.3.0)
+
+MITOS2 now annotates the best retained mitochondrial candidate even when it is
+unclosed, contains ambiguous bases, has missing reference genes or has unresolved
+COI identity. Unclosed candidates receive `--linear`; known circular candidates
+keep circular mode. Annotation requires a known mitochondrial genetic code.
+`--annotation-policy best` is the default; `accepted` restores accepted-only
+annotation, and `none` explicitly disables it. This does not relax biological
+acceptance or convert an annotated partial/unresolved sequence into a complete
+confirmed mitogenome. `annotation_status`, `annotation_scope` and the annotated
+candidate ID are recorded separately. `annotation_input.fasta` and MITOS products
+are retained in MitoLooper/.
+
+For your existing Belly results, after merging the PR:
+
+```bash
+git -C /home/ark/MAB/bin/Tortuga pull --ff-only
+
+bash /home/ark/MAB/bin/Tortuga/annotate_existing.sh \
+  /home/ark/MAB/NOAA/CA_intertidal/both_results_v210_hierarchy \
+  --recheck-bold
+```
+
+This uses the saved candidate FASTAs, genetic codes, Conda commands and database
+paths. It does not run an assembler, QC, ITSME, or reference selection. It repeats
+BOLD validation using the saved COI database inputs and then performs MITOS
+annotation. It reuses saved COX1 protein-hit coordinates when available, including
+circular-origin spans; otherwise it queries the whole retained candidate against
+the COI-only database. Omit `--recheck-bold` for annotation only. Successful unchanged
+annotations are cached; `--force` repeats them. Unknown codes require an explicit
+`--mt-code` or per-sample saved code. Changed database locations can be supplied
+with `--mitos-refdir`, `--mitos-refseqver`, `--bold-fasta`, `--bold-metadata`;
+`--only-sample` restricts processing. The active-run lock is respected.
+
+With `--recheck-bold`, the existing selected candidate is reassessed under the
+original run's acceptance policy; no thresholds are loosened. Previously published
+acceptance files are archived if the updated evidence no longer passes. Original
+sample summaries and stage records are retained under postprocess_history/.
+MITOS outputs are exported before deleting only that attempt's scratch, and the
+helper's generated BOLD index is removed after processing. `--keep-intermediates`
+retains helper work for debugging. Reports and dashboard are refreshed. A BOLD
+recheck failure is reported with a nonzero exit but does not block annotation.
+
+ITSME execution and recovery are also separate: `itsme_run_status` reports whether
+the program completed, failed or timed out, while complete/partial locus counts
+report biological recovery. A successful run with zero complete loci is not
+labeled an ITSME execution failure. `itsme_diagnostic_reason` records available
+stage failure reasons or points to partials and the native run summary.
 
 ## Portable HTML dashboard (2.2.0)
 
@@ -192,7 +241,7 @@ full-length gene boundaries. Other uncertain coordinate types remain rejected.
 rRNA product labels `s-rRNA`/`l-rRNA`, 12S/16S and small/large subunit labels are
 recognized when `/gene` is absent. This version does not model duplicated genes
 or multipartite mitochondrial genomes. Single-contig linear/unclosed candidates
-can be screened and annotated under `--accept-topology any`; this is not validation
+are annotated by default; accepting them requires `--accept-topology any`. This is not validation
 of telomeres or biological terminal structures.
 
 An unavailable initial local reference now triggers custom-reference-free
@@ -247,7 +296,13 @@ sequence is searched against the BOLD COI database. Defaults require >=97%
 identity, >=400 aligned bp and >=80% of the shorter marker/barcode sequence.
 Every qualifying hit within 2% of the best bit score must agree with the requested
 taxon. Missing metadata, conflicting near-best hits, a higher-scoring hit failing
-quality gates, or reaching the hit ceiling leaves the candidate unresolved.
+quality gates leaves the candidate unresolved. Reaching the subject limit alone
+no longer rejects the candidate: a score boundary below the near-best window
+allows the returned near-best evidence to be evaluated. If the window is still
+truncated, the search expands tenfold from `--bold-max-hits` (default 500) up to
+`--bold-search-max-hits` (default 50,000). A tied/truncated window at the hard cap
+remains unresolved. Search limits, boundary scores and attempts are saved in
+`bold_evidence.json`; taxonomic conflicts and missing metadata still block confirmation.
 
 These are configurable starting heuristics, not calibrated species boundaries.
 Per-candidate raw hits and BOLD process IDs, taxonomy, source and decision reason
@@ -412,7 +467,7 @@ GFF was produced. `recovered_annotation_failed` means recovery passed but annota
 failed. Relaxed-policy winners use `accepted_by_policy_annotated` or
 `accepted_by_policy_annotation_failed`; those names do not claim complete or
 circular mitogenomes. Other statuses include `partial_target_confirmed`, `unresolved_candidate`,
-`no_candidate` and `failed`. A failed requested WGS/ITS stage or annotation produces
+`no_candidate` and `failed`. A failed requested WGS/ITSME execution stage or attempted annotation produces
 a nonzero batch exit status while subsequent samples continue. Recovery-method
 failures followed by successful fallback remain visible without invalidating that
 successful recovery. Compaction preserves these statuses and logs even when

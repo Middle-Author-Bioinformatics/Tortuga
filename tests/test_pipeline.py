@@ -170,7 +170,8 @@ def test_no_assembly_exports_longest_target_partial(fixture):
     code,events=fixture["run"]({"novoplasty":{"circular":False,"complete":True}},["--no-assembly"])
     assert code==0
     assert "metaspades" not in [e["tool"] for e in events]
-    assert "mitos2" not in [e["tool"] for e in events]
+    assert "mitos2" in [e["tool"] for e in events]
+    assert summary(fixture)["annotation_scope"]=="exploratory_candidate"
     assert summary(fixture)["status"]=="partial_target_confirmed"
     assert (fixture["out"]/"W30877/MitoLooper/best_sequence.fasta").exists()
 
@@ -555,7 +556,8 @@ def test_length_and_combined_rules_use_one_contig(fixture,rule,min_genes,min_bp,
     code,events=fixture["run"]({"novoplasty":{"genes":["cox1"]}},extra)
     result=summary(fixture)
     assert code==0 and result["accepted_by_policy"] is accepted
-    assert ("mitos2" in [e["tool"] for e in events]) is accepted
+    assert "mitos2" in [e["tool"] for e in events]
+    assert result["annotation_scope"]==("accepted_candidate" if accepted else "exploratory_candidate")
     assert result["best_candidate"]["length_threshold_met"] is (12000>=min_bp)
     assert not result["complete_by_reference"]
 
@@ -575,7 +577,8 @@ def test_relaxed_length_policy_still_rejects_non_target_and_conflicting_bold(fix
     result=summary(fixture)
     assert code==0 and not result["accepted_by_policy"]
     assert "target_confirmed" in result["best_candidate"]["acceptance_failures"]
-    assert "mitos2" not in [e["tool"] for e in events]
+    assert "mitos2" in [e["tool"] for e in events]
+    assert result["annotation_scope"]=="exploratory_candidate"
 
 
 def test_relaxed_policy_does_not_override_topology_requirement(fixture):

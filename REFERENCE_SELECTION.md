@@ -56,8 +56,11 @@ Candidates without an annotated reference are searched directly against BOLD COI
 for target validation. Gene completeness stays unknown and cannot satisfy the
 default all-genes policy or a positive gene-count requirement. An explicit length
 policy can accept a candidate under its remaining topology/target/quality gates.
-MITOS2 requires a known `mt_code`; accepted FASTA is retained if annotation cannot
-run, with an explicit status and nonzero batch exit. No code is guessed.
+MITOS2 now annotates the best retained candidate by default, including unclosed
+or unresolved candidates, when `mt_code` is known. Annotation does not change
+acceptance. If the code is unavailable, the FASTA is retained and annotation is
+explicitly skipped; no code is guessed. Accepted candidates without a usable
+annotation code retain a nonzero batch exit.
 
 ## Outputs and deployment
 

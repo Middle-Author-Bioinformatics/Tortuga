@@ -10,8 +10,9 @@ from pathlib import Path
 import re
 
 RANKS = ('domain', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
-ITS_FIELDS = ['itsme_reporting_status', 'itsme_complete_locus_count', 'itsme_locus_ids',
-              'itsme_locus_lengths_bp', 'itsme_its_lengths_bp', 'itsme_taxa', 'itsme_taxonomy_ranks']
+ITS_ARRAY_FIELDS = ['itsme_locus_ids','itsme_locus_lengths_bp','itsme_its_lengths_bp','itsme_taxa','itsme_taxonomy_ranks']
+ITS_FIELDS = ['itsme_run_status','itsme_reporting_status','itsme_complete_locus_count',
+              'itsme_partial_locus_count',*ITS_ARRAY_FIELDS,'itsme_diagnostic_reason']
 LOCUS_FIELDS = ['sample', 'locus', 'locus_type', 'locus_length_bp', 'its_length_bp',
                 'its1_length_bp', 'five_8s_length_bp', 'its2_length_bp', 'taxon',
                 'taxonomy_rank', 'consensus_taxonomy', 'taxonomy_status', 'source_report']
@@ -76,10 +77,22 @@ def interval(value, limit=None):
 def summarize_itsme(root, summary):
     """Return cohort cells and one row per complete locus; never infer taxonomy from the target."""
     root = Path(root)
-    cells = {field: [] for field in ITS_FIELDS[2:]}
-    cells.update(itsme_complete_locus_count=None, itsme_reporting_status='missing_report')
+    cells = {field: [] for field in ITS_ARRAY_FIELDS}
+    run_status='completed' if summary.get('itsme_ok') is True else 'failed' if summary.get('itsme_ok') is False else 'not_run'
+    cells.update(itsme_complete_locus_count=None,itsme_partial_locus_count=None,
+                 itsme_reporting_status='missing_report',itsme_run_status=run_status,itsme_diagnostic_reason='')
+    stages_path=root/'stages.tsv'
+    stages=read_rows(stages_path)[0] if stages_path.is_file() else []
+    stage=next((row for row in reversed(stages) if row.get('stage')=='itsme'),{})
+    if run_status=='failed':
+        cells['itsme_run_status']='timeout' if stage.get('status')=='timeout' else 'failed'
+        cells['itsme_diagnostic_reason']=stage.get('reason') or ('ITSME exceeded its configured time limit' if stage.get('status')=='timeout' else 'ITSME execution failed; inspect logs/itsme.log')
+    partials=first_file(root,['partials.csv','partials.tsv'])
+    if partials:
+        cells['itsme_partial_locus_count']=len(read_rows(partials)[0])
     if summary.get('pipeline') == 'mitolooper':
         cells['itsme_reporting_status'] = 'not_requested'
+        cells['itsme_run_status'] = 'not_requested'
         return cells, []
     report = first_file(root, ['master_summary.csv', 'master_summary.tsv'])
     if report is None:
@@ -87,6 +100,8 @@ def summarize_itsme(root, summary):
             cells['itsme_reporting_status'] = 'failed_no_report'
         elif summary.get('itsme_ok') is None:
             cells['itsme_reporting_status'] = 'not_run'
+        if run_status=='completed':
+            cells['itsme_diagnostic_reason']='ITSME exited successfully, but its result table is unavailable'
         return cells, []
     rows, columns = read_rows(report)
     if not ({'contig', 'locus'} & set(columns)):
@@ -143,6 +158,8 @@ def summarize_itsme(root, summary):
     cells.update(itsme_complete_locus_count=len(results),
                  itsme_reporting_status=('available_from_failed_run' if summary.get('itsme_ok') is False else
                                          'available' if results else 'no_complete_loci'))
+    if run_status=='completed' and not results:
+        cells['itsme_diagnostic_reason']='ITSME completed successfully; no complete ITS-containing locus was reported. Check partials and native run_summary.txt.'
     for field, source in [('itsme_locus_ids', 'locus'), ('itsme_locus_lengths_bp', 'locus_length_bp'),
                           ('itsme_its_lengths_bp', 'its_length_bp'), ('itsme_taxa', 'taxon'),
                           ('itsme_taxonomy_ranks', 'taxonomy_rank')]:

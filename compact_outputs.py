@@ -475,14 +475,15 @@ def refresh_cohort(root):
             reader=csv.DictReader(handle)
             fields=list(reader.fieldnames or [])
             rows=list(reader)
-        for field in ["itsme_output","final_directory"]:
+        for field in ["itsme_output","final_directory","annotation_ok","annotation_status","annotation_scope","target_status","target_reason","accepted_by_policy"]:
             if field not in fields:
                 fields.append(field)
         for row in rows:
             summary=summaries.get(row["sample"],{})
-            for field in ["itsme_output","final_directory"]:
+            for field in fields:
                 if field in summary:
-                    row[field]=summary[field]
+                    value=summary[field]
+                    row[field]=json.dumps(value) if isinstance(value,(list,dict)) else value
         table(path,rows,fields,",")
     path=root/"last_invocation.json"
     if path.exists():
@@ -501,7 +502,7 @@ def finished_sample(sample):
         return False
     result=read_json(summary)
     if result.get("status") not in {"completed","failed","recovered_annotated","recovered_annotation_failed",
-            "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable","partial_target_confirmed",
+            "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable","accepted_annotation_disabled","partial_target_confirmed",
             "unresolved_candidate","no_candidate","reference_unavailable"}:
         return False
     # A newer checkpoint can indicate an interrupted retry with a stale old summary.
