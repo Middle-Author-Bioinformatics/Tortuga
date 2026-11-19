@@ -5,7 +5,8 @@ in a modern browser. All display data, CSS, JavaScript, gene maps and bounded gr
 previews are embedded: no server, account, CDN, internet access or browser plugins
 are needed. Original sequence, annotation, graph and table downloads use relative
 links. Move or share the **whole output directory** to keep those links working.
-No genomic sequences or raw reads are embedded in the HTML.
+Selected gene/ITS-region sequences and reduced graph-node sequences are embedded
+for copying and FASTA download. Raw reads and whole-genome assemblies are not embedded.
 
 The first version uses a quiet sample list and one workspace, rather than a grid
 of metric cards. It has three views:
@@ -48,8 +49,9 @@ This creates:
 
 Copy the result directory to your computer and double-click **dashboard.html**.
 An optional `--title "California intertidal"` changes the displayed collection
-name. Building the report reads saved outputs and replaces only dashboard.html;
-it does not run assemblers, annotations, classification, or cleanup. It refuses
+name. Building the report reads saved outputs, writes selected graph/provenance
+assets and replaces dashboard.html. It does not run assemblers, annotations,
+classification or cleanup. It refuses
 an active controller. If the report is a stale snapshot after an interrupted
 sample retry, old recovery claims are hidden and a warning is shown.
 
@@ -99,16 +101,78 @@ Building the dashboard preserves the saved confirmation and acceptance decisions
 
 ## How to interpret the views
 
+### Graph-to-sequence view (2.4.0)
+
+The graph view follows the older ITSME graph-to-sequence dashboard: choose a locus,
+highlight its path, distinguish shared nodes, inspect taxonomy and copy sequences.
+Only graphs associated with reported loci or the chosen mitogenome are offered.
+Native `locus_source_map.tsv`, `contigs.paths`, original manifest paths and exact
+sequence reconstruction distinguish nodes from different source assemblies.
+Collapsed alternative paths are not treated as the chosen representative.
+
+The path table gives segment orientation, length, incoming overlap and added
+bases. Its length equation appears only when the reconstructed path contains the
+final FASTA sequence (or its reverse complement), accounting for overlaps and
+trimmed ends. Discontinuous paths retain their separate pieces; unknown overlaps
+are not assumed to be zero. A FASTG overlap can be inferred only when recorded
+links and the inferred common overlap reconstruct the final sequence exactly.
+Short segments required by a selected path are kept; unrelated short graphs are
+excluded. Distinct reported ITS taxa are not collapsed into one arbitrary locus.
+
+New compact runs preserve `ITSME/selected_graphs/` and
+`MitoLooper/selected_graphs/` before stage cleanup. These contain reduced GFA
+graphs and an index of path/sequence evidence. Full source graph exports may be
+removed once every reported sequence in that branch has a preserved subgraph;
+`--keep-intermediates` preserves native work. Old missing source/path files cannot
+always be recreated from FASTA. No synthetic assembly graph is drawn as a substitute.
+
+Node labels/popovers show observed locus-consensus or assembly-COI associations,
+with the assignment scope identified. They are not independent BLAST classifications
+of every node. Nodes with no evidence remain unassigned; expected taxonomy is never
+projected onto graph nodes. Gene, ITS-region and node popovers provide Copy,
+FASTA download and an NCBI BLAST link; clicking the link opens the BLAST form and
+does not automatically submit sample sequences.
+
+### Gene counts and COI support
+
+MITOS `gene` entries for known coding genes are displayed as CDS even when RNA
+features coexist. Explicit CDS children take precedence over parent gene records;
+multipart CDS parts are joined and minus strands reverse-complemented. Circular
+features extending over the origin are split on the map and extracted across
+both ends. Invalid/out-of-range features remain excluded without on-screen
+developer warnings; native annotations remain downloadable.
+
+Core counts show the canonical 13 CDS and two rRNAs separately, with additional
+genes listed explicitly. The label distinguishes MITOS annotation counts from
+reference-screen counts. Reference-specific recovery remains in its own table;
+a sponge reference with `atp9` can legitimately have 16 CDS+rRNA genes total.
+
+The expected identity includes the supplied ranked hierarchy. Observed COI names
+come only from saved alignments/metadata; even a stored confirmed-target flag
+does not substitute the expected name when retained reference evidence is absent.
+The evidence grade is conservative and uncalibrated: High requires at least 99%
+identity, 400 aligned bp, 90% shorter-sequence coverage and complete near-best
+metadata/agreement. Moderate requires at least 97%, 150 bp and 80% coverage.
+Mixed indicates different near-best reference taxa; Limited indicates incomplete
+metadata, score-window truncation or unavailable scores. No matches is Unavailable;
+other matches are Low. The deepest common retained lineage is shown only when
+the evaluated near-best window is complete. These grades are not probabilities
+or replacements for the pipeline's explicit target-confirmation policy.
+
+Download inventories collapse FASTA files with identical sequence content even
+when headers differ, and show the selected graphs in the graph workspace instead
+of listing every intermediate graph. Report rebuilding does not delete existing
+native FASTAs.
+
 - An **accepted assembly** met the selected run policy. A **best candidate** may
   be partial, unclosed or unresolved. Read acceptance/circularity/gene evidence
   separately; reference-gene recovery does not establish every tRNA or exclude
   all NUMTs/chimeras. Policy acceptance is not a universal completeness claim.
 - ITS predicted taxonomy comes from native ITSME consensus reports. Unknown
   taxa/ranks stay unknown. Expected target names are labeled as expectations.
-- Mitochondrial taxonomy remains the existing COI/BOLD **target check**, with
-  supporting reference records when retained. It does not independently infer
-  the deepest possible taxonomy, and the assembly reference is not a taxonomic
-  prediction. This dashboard does not change scientific inference.
+- Mitochondrial taxonomy combines displayed observed COI reference records with
+  the conservative common-lineage summary above. The saved COI/BOLD target check
+  remains separate. Assembly reference names are not taxonomic predictions.
 - A gene map is a coordinate display of retained MITOS GFF annotations, shown
   unrolled even for circular assemblies. It is separate from the assembly graph.
   Feature records are not assumed to be distinct genes. Multiple annotation
@@ -118,11 +182,11 @@ Building the dashboard preserves the saved confirmation and acceptance decisions
   and off-target paths. WGS graphs are explicitly labeled as whole-genome graphs,
   not as the selected mitochondrial path. Node positions/widths are schematic;
   segment metadata gives actual recorded lengths. Link orientations are retained.
-- For portability and responsiveness, each graph preview is limited to the first
-  240 segments and up to 720 stored oriented links. Files over 100 MiB are offered
-  as downloads instead. GFA2 is downloadable but not rendered in this first
-  version. Truncation and unsupported formats are labeled explicitly. Full graph
-  files are never altered. Annotation previews cap at 3,000 feature records.
+- Source-graph reading is limited to 100 MiB per file. Only selected-path nodes
+  are embedded; paths are not truncated to the first arbitrary nodes of a source
+  graph. GFA1 and FASTG are supported; GFA2 is not rendered. Annotation parsing
+  caps at 3,000 source feature records. Existing source files are not altered by
+  report rebuilding.
 - Missing graph, QC, annotation, sequence or taxonomy evidence is shown as
   unavailable, not as zero recovery or as an invented result. Failed annotation
   outputs are labeled for review. Downloads stay available where retained.

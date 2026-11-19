@@ -25,6 +25,13 @@ def test_full_hit_page_with_score_gap_can_confirm_target():
     assert not decision['near_best_truncated']
 
 
+def test_short_barcode_confirmation_is_length_configurable():
+    row = hit('SHORT', length='200', qlen='200', slen='650')
+    metadata = {'SHORT':{'taxon':'Target', 'lineage':'Animalia;Target'}}
+    assert m.bold_decision([row], metadata, 'Target',97,.8,150,.02,500)['status'] == 'confirmed_target'
+    assert m.bold_decision([row], metadata, 'Target',97,.8,400,.02,500)['status'] == 'unresolved'
+
+
 def test_tied_page_remains_unresolved_at_limit_and_duplicate_hsps_are_not_subjects():
     meta={key:{'taxon':'Target','lineage':'Animalia;Target'} for key in ['A','B']}
     assert m.bold_decision([hit('A'),hit('B')],meta,'Target',97,.8,400,.02,2)['reason_code']=='near_best_truncated'

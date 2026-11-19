@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -87,8 +87,8 @@ def normalize_gene(name):
     s = re.sub(r"^mt", "", s)
     aliases = {"coi": "cox1", "co1": "cox1", "coii": "cox2", "co2": "cox2",
                "coiii": "cox3", "co3": "cox3", "cob": "cytb", "cib": "cytb",
-               "12srrna": "rrns", "rrns": "rrns", "srrna": "rrns", "rrn12": "rrns",
-               "16srrna": "rrnl", "rrnl": "rrnl", "lrrna": "rrnl", "rrn16": "rrnl"}
+               "12srrna": "rrns", "rrns": "rrns", "rns": "rrns", "srrna": "rrns", "rrn12": "rrns",
+               "16srrna": "rrnl", "rrnl": "rrnl", "rnl": "rrnl", "lrrna": "rrnl", "rrn16": "rrnl"}
     if s.startswith("nd") and not s.startswith("nad"):
         s = "nad" + s[2:]
     return aliases.get(s, s)
@@ -456,6 +456,10 @@ def screen_bold(runner, stage, query, bold_db, folder, metadata, target, args):
             break
         limit=min(maximum,limit*10)
     decision["search_attempts"]=attempts
+    decision['alignment_thresholds']={'identity_percent':args.coi_identity,
+                                     'shorter_sequence_coverage':args.coi_coverage,
+                                     'minimum_aligned_bp':args.coi_min_bp,
+                                     'near_best_fraction':args.bold_near_fraction}
     decision["maximum_search_limit"]=maximum
     if decision.get("reason_code")=="near_best_truncated":
         decision["reason"]+="; near-best evidence remains incomplete at --bold-search-max-hits"
@@ -1176,7 +1180,8 @@ def parser(require_pipeline=False):
     p.add_argument("--gene-coverage", type=float, default=.8)
     p.add_argument("--coi-identity", type=float, default=97)
     p.add_argument("--coi-coverage", type=float, default=.8, help="Aligned fraction of shorter COI/barcode sequence")
-    p.add_argument("--coi-min-bp", type=int, default=400)
+    p.add_argument("--coi-min-bp", type=int, default=150,
+                   help="Minimum aligned COI bases (150 supports short barcodes; use 400 for the former cutoff)")
     p.add_argument("--bold-near-fraction", type=float, default=.02)
     p.add_argument("--bold-max-hits", type=int, default=500,help="Initial BOLD search subject limit")
     p.add_argument("--bold-search-max-hits",type=int,default=50000,
@@ -1424,6 +1429,8 @@ def main(argv=None,require_pipeline=False):
         raise ValueError("Timeouts must be positive")
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
         raise ValueError("Invalid coverage or near-best fraction")
+    if args.coi_min_bp < 1 or not 0 <= args.coi_identity <= 100:
+        raise ValueError('COI minimum length must be positive and identity between 0 and 100')
     commands,environment_rows=resolve_commands(args)
     samples, reference_choices, resolved_samples, reference_failures = [], [], [], []
     catalog = None

@@ -1,5 +1,6 @@
 """Illustrative data for dashboard tests and visual checks, not biological results."""
 import json
+import random
 from pathlib import Path
 import sys
 
@@ -28,11 +29,17 @@ def make_demo(root, samples=8):
         result = {'sample': name, 'pipeline': 'both', 'status': 'recovered_annotated' if accepted else 'partial_target_confirmed',
                   'target_taxon': taxon, 'itsme_ok': True, 'best_length_bp': length, 'circular': accepted,
                   'genes_recovered': 15 if accepted else 9, 'genes_expected': 15, 'complete_by_reference': accepted,
-                  'best_method': 'novoplasty' if accepted else 'getorganelle', 'winning_method': 'novoplasty' if accepted else '',
+                  'best_method': 'getorganelle', 'winning_method': 'getorganelle' if accepted else '',
                   'target_status': 'unresolved' if index == 6 else 'confirmed_target', 'annotation_ok': accepted,
-                  'best_candidate': {'candidate_id': '011_novoplasty_001'}}
+                  'taxonomy': {'kingdom':'Animalia', 'phylum':'Arthropoda', 'class':'Malacostraca', 'order':'Decapoda', 'family':'Pinnotheridae', 'genus':taxon.split()[0], 'species':taxon},
+                  'best_candidate': {'candidate_id': '011_novoplasty_001',
+                                     'genes_found':['atp6','atp8','cox1','cox2','cox3','cytb','nad1','nad2','nad3','nad4','nad4l','nad5','nad6']+(['mutS'] if index==1 else []),
+                                     'rrnas_found':['rrns','rrnl']}}
+        if index == 1:
+            result['genes_expected'] = 16
         atomic_json(sample/'final/summary.json', result)
-        seq = 'ACGT'*(length//4)+'A'*(length%4)
+        rng = random.Random(index)
+        seq = ''.join(rng.choice('ACGT') for _ in range(length))
         put(sample/'MitoLooper/best_sequence.fasta', '>candidate\n'+seq+'\n')
         if accepted:
             put(sample/'MitoLooper/accepted_candidate.fasta', '>candidate\n'+seq+'\n')
@@ -46,15 +53,12 @@ def make_demo(root, samples=8):
                      ('nad2', 'CDS', 14780, length-30, '+')]
             lines = ['##gff-version 3']
             for i, (gene, kind, start, end, strand) in enumerate(genes):
-                lines.append(f'candidate\tMITOS2\t{kind}\t{start}\t{end}\t.\t{strand}\t.\tID={gene};Name={gene}')
+                lines.append(f'candidate\tMITOS2\t{"gene" if kind=="CDS" else kind}\t{start}\t{end}\t.\t{strand}\t.\tID={gene};Name={gene}')
                 if i % 2 == 0 and start > 80:
                     lines.append(f'candidate\tMITOS2\ttRNA\t{start-75}\t{start-10}\t.\t+\t.\tID=trn{i};Name=trn{i}')
             put(sample/'MitoLooper/mitos_result.gff', '\n'.join(lines)+'\n')
-        graph = ['H\tVN:Z:1.0']
-        for segment in range(1, 13):
-            graph.append(f'S\t{segment}\t*\tLN:i:{segment*213}\tDP:f:{20+segment}')
-        for start, end in [(1,2),(2,3),(3,4),(4,5),(5,6),(6,7),(7,8),(8,9),(9,10),(10,11),(11,12),(12,1),(3,7)]:
-            graph.append(f'L\t{start}\t+\t{end}\t+\t55M')
+        graph = ['H\tVN:Z:1.0', f'S\t1\t{seq[:5000]}\tDP:f:22', f'S\t2\t{seq[4950:10000]}\tDP:f:23', f'S\t3\t{seq[9950:]}\tDP:f:24', 'S\t99\tACGT\tDP:f:1',
+                 'L\t1\t+\t2\t+\t50M', 'L\t2\t+\t3\t+\t50M', 'L\t3\t+\t1\t+\t0M']
         put(sample/'MitoLooper/getorganelle_assembly_graph.gfa', '\n'.join(graph)+'\n')
         fastg = []
         for segment in range(1, 9):
@@ -62,7 +66,10 @@ def make_demo(root, samples=8):
             fastg += [f'>EDGE_{segment}_length_{segment*140}_cov_38{target};', 'ACGT']
         fastg += [">EDGE_3_length_420_cov_38:EDGE_6_length_840_cov_38';", 'ACGT']
         put(sample/'ITSME/assembly_graph.fastg', '\n'.join(fastg)+'\n')
-        rows = []
+        rows, path_rows, locus_sequences = [], [], []
+        its_graph = ['H\tVN:Z:1.0']
+        shared = ''.join(rng.choice('ACGT') for _ in range(2000))
+        its_graph.append(f'S\t101\t{shared}\tDP:f:38')
         tax_rows = []
         for locus in range(its_count):
             locus_id = 'rDNA_locus_'+str(locus+1)
@@ -72,17 +79,25 @@ def make_demo(root, samples=8):
                    'ITS2_coordinates': f'2331-{2790+shift}', 'LSU_coordinates': f'{2791+shift}-{7230+shift}',
                    'taxonomy_status': 'PASS_taxonomically_coherent', 'consensus_taxonomy': 'Metazoa; '+taxon}
             rows.append(row)
+            nt = shared+''.join(rng.choice('ACGT') for _ in range(row['length_bp']-2000))
+            a, b = str(102+locus*2), str(103+locus*2)
+            its_graph += [f'S\t{a}\t{nt[1950:5000]}\tDP:f:38', f'S\t{b}\t{nt[4950:]}\tDP:f:38',
+                          f'L\t101\t+\t{a}\t+\t50M', f'L\t{a}\t+\t{b}\t+\t50M']
+            path_rows.append({'locus':locus_id,'source_path':f'ITSME_PATH_{locus+1:06d}', 'node_path':f'101+,{a}+,{b}+', 'path_status':'PROMOTED'})
+            locus_sequences.append('>'+locus_id+'\n'+nt+'\n')
             tax_rows.append({'contig': locus_id, 'consensus_species': taxon if len(taxon.split()) > 1 else 'NA',
                              'consensus_genus': taxon.split()[0]})
         columns = ['contig','locus_type','length_bp','SSU_coordinates','ITS1_coordinates','5.8S_coordinates',
                    'ITS2_coordinates','LSU_coordinates','taxonomy_status','consensus_taxonomy']
         table(sample/'ITSME/master_summary.csv', rows, columns, ',')
         table(sample/'ITSME/taxonomy_validation.tsv', tax_rows, ['contig','consensus_genus','consensus_species'])
-        put(sample/'ITSME/reported_loci.fasta', ''.join('>'+row['contig']+'\n'+'ACGT'*1800+'\n' for row in rows))
+        put(sample/'ITSME/reported_loci.fasta', ''.join(locus_sequences))
+        put(sample/'ITSME/assembly_graph_with_scaffolds.gfa', '\n'.join(its_graph)+'\n')
+        table(sample/'ITSME/locus_source_map.tsv', path_rows, ['locus','source_path','node_path','path_status'])
         atomic_json(sample/'candidates/011_novoplasty_001/bold_evidence.json', {
             'status': result['target_status'],
             'reason': 'BOLD near-best score window reaches the search limit' if index == 6 else 'All near-best qualifying BOLD records match requested taxon',
-            'hits': [{'bitscore': None if index == 6 else '1200', 'pident': '99.3', 'length': '648', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
+            'hits': [{'bitscore': None if index == 6 else '1200', 'pident': '99.3', 'length': '648', 'qlen':'650', 'slen':'650', 'metadata': {'taxon': taxon, 'processid': 'DEMO0001', 'lineage': 'Metazoa; '+taxon}}]})
         if index == 0:
             # Reproduce multiple out-of-bounds feature warnings in the native GFF.
             with (sample/'MitoLooper/mitos_result.gff').open('a') as handle:

@@ -21,7 +21,10 @@ def main():
     p.add_argument("--sequence-column")
     p.add_argument("--processid-column")
     p.add_argument("--marker-column")
+    p.add_argument("--min-bp", type=int, default=150, help="Minimum COI reference length (default 150)")
     args = p.parse_args()
+    if args.min_bp < 1:
+        p.error('--min-bp must be positive')
     if args.outdir.exists() and any(args.outdir.iterdir()):
         raise ValueError("Output directory must be new or empty")
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -46,7 +49,7 @@ def main():
             seq = re.sub(r"[\s.\-]","",row[scol]).upper().replace("U","T")
             pid = row[pcol].strip()
             taxa = [row.get(rank,"").strip() for rank in ranks if row.get(rank,"").strip()]
-            if not pid or not re.fullmatch(r"[A-Za-z0-9_.:-]+",pid) or not taxa or len(seq)<400 or set(seq)-set("ACGTRYSWKMBDHVN"):
+            if not pid or not re.fullmatch(r"[A-Za-z0-9_.:-]+",pid) or not taxa or len(seq)<args.min_bp or set(seq)-set("ACGTRYSWKMBDHVN"):
                 skipped += 1
                 continue
             sid = pid+"_"+re.sub(r"[^A-Za-z0-9]","",marker)
@@ -60,7 +63,7 @@ def main():
         raise ValueError("No eligible COI records; check export columns and marker labels")
     write_table(args.outdir/"metadata.tsv",rows,["sequence_id","processid","taxon","lineage","source"])
     (args.outdir/"provenance.json").write_text(json.dumps({"source":args.source,"input":str(args.export.resolve()),
-        "input_sha256":digest_file(args.export),"retained_records":len(rows),"skipped_records":skipped},indent=2)+"\n")
+        "input_sha256":digest_file(args.export),"minimum_length_bp":args.min_bp,"retained_records":len(rows),"skipped_records":skipped},indent=2)+"\n")
     print(f"Prepared {len(rows)} COI references; skipped {skipped} records")
 
 
@@ -70,3 +73,4 @@ if __name__ == "__main__":
     except (ValueError,OSError,KeyError,csv.Error) as e:
         print(f"ERROR: {e}",file=sys.stderr)
         sys.exit(1)
+
