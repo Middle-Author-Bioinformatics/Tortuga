@@ -33,7 +33,7 @@ assert(text().includes('15,740'));
 assert(document.querySelectorAll('.gene').length > 10);
 assert(!text().includes('Circular assembly, shown unrolled'));
 assert(!text().includes('Exploratory MITOS annotation of the retained candidate.'));
-assert(document.querySelector('.evidence').textContent.includes('COI consensus'));
+assert(document.querySelector('.evidence').textContent.includes('COI reference match'));
 assert(text().includes('13 / 13'));
 assert(text().includes('High'));
 assert(document.querySelector('#expected-hierarchy').textContent.includes('Animalia'));

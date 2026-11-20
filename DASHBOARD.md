@@ -8,6 +8,20 @@ links. Move or share the **whole output directory** to keep those links working.
 Selected gene/ITS-region sequences and reduced graph-node sequences are embedded
 for copying and FASTA download. Raw reads and whole-genome assemblies are not embedded.
 
+COI reference names are displayed independently of the identity cutoff used to
+confirm the expected target. Version 2.4.1 recovers names from existing lineages
+when a prepared BOLD record ends with a missing-value marker such as `None`.
+Rebuild the dashboard with the existing metadata to repair the display; no database
+download, preparation, BLAST, assembly or annotation rerun is needed for this fix.
+Reference matches and shared reference lineages are observed database evidence,
+not automatic confirmation of the expected species.
+
+To change the validation cutoff on saved candidates, use `annotate_existing.sh`
+with `--recheck-bold --coi-min-bp 150 --coi-identity 95`. This repeats COI validation
+and refreshes reports while reusing unchanged MITOS annotations. It does not rerun
+assembly or ITSME. The default identity cutoff remains 97%; a lower cutoff can
+admit more distant reference matches and does not force target confirmation.
+
 The first version uses a quiet sample list and one workspace, rather than a grid
 of metric cards. It has three views:
 

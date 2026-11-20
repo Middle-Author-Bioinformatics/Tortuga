@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 import re
 from urllib.parse import quote, unquote
+from bold_taxonomy import normalize_taxonomy
 from report_evidence import (read_annotation, fasta_records, core_gene_counts,
                              distinct_files, coi_support)
 
@@ -219,9 +220,10 @@ def coi_matches(evidence, raw):
     hits = []
     for hit in rows:
         meta = hit.get('metadata') or metadata.get(hit.get('sseqid'), {})
+        taxon, lineage = normalize_taxonomy(meta.get('taxon'), meta.get('lineage'))
         shorter = min(number(hit.get('qlen')) or 0, number(hit.get('slen')) or 0)
         hits.append({'subject': hit.get('sseqid', ''), 'bitscore': number(hit.get('bitscore')),
-                     'taxon': meta.get('taxon', ''), 'lineage': meta.get('lineage', ''),
+                     'taxon': taxon, 'lineage': lineage,
                      'identity': number(hit.get('pident')), 'aligned_bp': number(hit.get('length')),
                      'coverage': min(1, (number(hit.get('length')) or 0)/shorter) if shorter else None,
                      'record': meta.get('processid') or hit.get('sseqid', '')})
@@ -248,7 +250,9 @@ def resolve_coi_names(samples, metadata_sources):
                     continue
                 for row in reader:
                     subject = keys.get(row['sequence_id'])
-                    if subject and row.get('taxon', '').strip():
+                    if subject:
+                        row['taxon'], row['lineage'] = normalize_taxonomy(row.get('taxon'), row.get('lineage'))
+                    if subject and row.get('taxon'):
                         found[subject] = row
                         if len(found) == len(pending):
                             break
