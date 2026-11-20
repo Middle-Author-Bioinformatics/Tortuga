@@ -20,7 +20,7 @@ import sys
 import time
 from bold_taxonomy import normalize_taxonomy
 
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],

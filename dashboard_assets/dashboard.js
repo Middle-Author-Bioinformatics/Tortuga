@@ -51,7 +51,7 @@ function showSequence(anchor, name, sequence, description = '') {
   box.style.left = Math.max(12, Math.min(bounds.left, window.innerWidth-440))+'px';
   box.style.top = Math.max(12, Math.min(bounds.bottom+8, window.innerHeight-350))+'px';
 }
-function fileList(files, title = 'All retained files') {
+function fileList(files, title = 'Result files') {
   return files.length ? details(title+' · '+files.length, table(['File', 'Size'], files.map(file => [link(file), fmt(file.bytes/1024)+' KiB']))) : null;
 }
 function selectSample(index) {state.sample = index; state.locus = 0; state.mode = 'map'; render();}
@@ -105,13 +105,18 @@ function mapSequence(length, features, regionMap = false) {
   panel.append(drawing, readout, el('div', {class: 'legend'}, Object.entries(regionMap ? {'ITS cassette': '#96d1b1', '5.8S': '#d4b477', 'Flanking rRNA': '#587c69'} : {CDS: '#96d1b1', rRNA: '#d4b477', tRNA: '#b7a1ce'}).map(([label, color]) => el('span', {}, el('i', {style: 'background:'+color}), label))));
   return panel;
 }
-function renderGraph(graphs, host, locus = null, method = '') {
+function renderGraph(graphs, host, locus = null, method = '', sources = []) {
   if (locus) graphs = graphs.filter(graph => (graph.loci || []).includes(locus.locus));
-  if (!graphs.length) {host.append(empty('Source graph unavailable', method === 'novoplasty' ? 'NOVOPlasty sequence output' : '')); return;}
+  if (!graphs.length) {
+    host.append(empty(sources.length ? 'Selected path unavailable' : 'Source graph unavailable', !sources.length && method === 'novoplasty' ? 'NOVOPlasty sequence output' : ''));
+    const downloads = fileList(sources, 'Source graphs'); if (downloads) host.append(downloads);
+    return;
+  }
   const select = el('select', {'aria-label': 'Assembly graph file'}, graphs.map((graph, index) => el('option', {value: index}, graph.label || graph.file?.name || 'Selected assembly')));
   const zoomIn = el('button', {'aria-label': 'Zoom in'}, '+'), zoomOut = el('button', {'aria-label': 'Zoom out'}, '−'), reset = el('button', {'aria-label': 'Fit graph'}, 'Fit');
   const tools = el('div', {class: 'graph-tools'}, select, el('div', {class: 'graph-buttons'}, zoomOut, zoomIn, reset));
   const plot = el('div'); host.append(tools, plot);
+  const downloads = fileList(sources, 'Source graphs'); if (downloads) host.append(downloads);
   const draw = () => {
     const graph = graphs[Number(select.value)]; plot.replaceChildren();
     [zoomIn, zoomOut, reset].forEach(button => {button.disabled = !graph.nodes.length;});
@@ -171,7 +176,7 @@ function mitoView(sample) {
   ]));
   root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'Assembly topology' : 'Mitochondrial sequence'), viewSwitch([['map', 'Sequence & genes'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
-  if (state.mode === 'graph') renderGraph(mito.graphs, host, null, mito.method);
+  if (state.mode === 'graph') renderGraph(mito.graphs, host, null, mito.method, mito.source_graphs || []);
   else {
     const features = mito.annotation.features;
     const types = new Set(['CDS', 'gene', 'rRNA', 'tRNA', 'ncRNA']);
@@ -209,7 +214,7 @@ function itsView(sample) {
   }
   root.append(el('div', {class: 'section-head'}, el('h3', {}, state.mode === 'graph' ? 'rDNA assembly graph' : 'Reconstructed rDNA locus'), viewSwitch([['map', 'Locus map'], ['graph', 'Assembly graph']])));
   const host = el('div'); root.append(host);
-  if (state.mode === 'graph') renderGraph(its.graphs, host, locus);
+  if (state.mode === 'graph') renderGraph(its.graphs, host, locus, '', its.source_graphs || []);
   else if (locus) host.append(mapSequence(locus.locus_length_bp || Math.max(0, ...locus.regions.map(region => region.end)), locus.regions, true));
   else host.append(empty(its.status === 'not_requested' ? 'ITSME not requested' : ['missing_report','unsupported_report','failed_no_report','not_run'].includes(its.status) ? 'ITSME results unavailable' : 'No complete ITS locus reported', ''));
   if (locus) {

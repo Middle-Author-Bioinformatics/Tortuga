@@ -50,6 +50,9 @@ click('[aria-label="Close sequence"]');
 click('.view-switch button:last-child');
 noCommentary();
 assert.equal(document.querySelectorAll('.graph .segment').length, 3);
+assert(text().includes('Source graphs · 1'));
+assert(text().includes('Result files ·'));
+assert(!text().includes('All retained files'));
 click('.graph .segment');
 assert(document.querySelector('.graph-readout').textContent.includes('Segment 1'));
 assert(document.querySelector('.sequence-popover').textContent.includes('Assembly COI match'));
@@ -108,6 +111,15 @@ dom.window.eval("state.sample=0; state.branch='mito'; report.samples[0].mito.hit
 assert(document.querySelector('.evidence').textContent.includes('No COI match'));
 assert(!document.querySelector('.evidence').textContent.includes('Rathbunixa occidentalis'));
 assert.equal(document.querySelectorAll('[src^="http"],link[href^="http"]').length, 0);
+// A retained native graph stays downloadable when no final path was mapped.
+dom.window.eval("report.samples[0].mito.graphs=[]; state.mode='graph'; render();");
+assert(text().includes('Selected path unavailable'));
+assert(!text().includes('Source graph unavailable'));
+const sourceLink = [...document.querySelectorAll('a')].find(node => node.getAttribute('href') === reportData.samples[0].mito.source_graphs[0].href);
+assert(sourceLink && sourceLink.hasAttribute('download'));
+dom.window.eval("report.samples[0].mito.source_graphs=[]; render();");
+assert(text().includes('Source graph unavailable'));
+assert(!text().includes('Selected path unavailable'));
 assert.deepEqual(errors, []);
 console.log('Passed offline DOM checks: filtering, sample/branch/locus switching, gene selection, GFA/FASTG selection, zoom buttons, comparison, run failures and missing results.');
 dom.window.close();
