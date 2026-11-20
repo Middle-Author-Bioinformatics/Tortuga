@@ -18,8 +18,9 @@ import signal
 import subprocess
 import sys
 import time
+from bold_taxonomy import normalize_taxonomy
 
-VERSION = "2.4.0"
+VERSION = "2.4.1"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -818,6 +819,7 @@ def load_bold_metadata(path):
             raise ValueError("BOLD metadata requires sequence_id, processid, taxon, lineage, source columns")
         rows = {}
         for row in reader:
+            row['taxon'], row['lineage'] = normalize_taxonomy(row.get('taxon'), row.get('lineage'))
             if row["sequence_id"] in rows or not all(row[k].strip() for k in ["sequence_id", "processid", "taxon", "source"]):
                 raise ValueError("Duplicate or incomplete BOLD metadata record")
             rows[row["sequence_id"]] = row

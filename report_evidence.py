@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 import re
 from urllib.parse import unquote
+from bold_taxonomy import normalize_taxonomy
 
 CORE_CDS = {'atp6', 'atp8', 'cox1', 'cox2', 'cox3', 'cytb',
             'nad1', 'nad2', 'nad3', 'nad4', 'nad4l', 'nad5', 'nad6'}
@@ -178,6 +179,11 @@ def distinct_files(files, root):
 
 def coi_support(hits, evidence):
     """An explicit evidence grade, never a calibrated species probability."""
+    normalized = []
+    for hit in hits:
+        taxon, lineage = normalize_taxonomy(hit.get('taxon'), hit.get('lineage'))
+        normalized.append(dict(hit, taxon=taxon, lineage=lineage))
+    hits = normalized
     if not hits:
         return {'grade': 'Unavailable', 'taxon': '', 'agreement': None}
     scored = [hit for hit in hits if hit.get('bitscore') is not None]

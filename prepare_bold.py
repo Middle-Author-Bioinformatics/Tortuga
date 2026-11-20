@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sys
 from mito_pipeline import digest_file, write_table, fasta_write
+from bold_taxonomy import taxon_name
 
 
 def main():
@@ -48,7 +49,7 @@ def main():
                 continue
             seq = re.sub(r"[\s.\-]","",row[scol]).upper().replace("U","T")
             pid = row[pcol].strip()
-            taxa = [row.get(rank,"").strip() for rank in ranks if row.get(rank,"").strip()]
+            taxa = [name for rank in ranks if (name := taxon_name(row.get(rank)))]
             if not pid or not re.fullmatch(r"[A-Za-z0-9_.:-]+",pid) or not taxa or len(seq)<args.min_bp or set(seq)-set("ACGTRYSWKMBDHVN"):
                 skipped += 1
                 continue

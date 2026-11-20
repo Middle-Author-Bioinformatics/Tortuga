@@ -1,3 +1,12 @@
+# 2.4.1 - 2026-11-19
+
+- Recover observed COI reference names from existing BOLD lineages when the
+  terminal taxon is the literal `None`, `null` or another missing-value marker.
+  Apply the same normalization during database preparation and validation.
+- Label dashboard taxa as reference matches or shared reference lineages,
+  separately from confirmation of the sample's expected identity. Existing
+  alignments and metadata are sufficient to rebuild the display.
+
 # 2.4.0 - 2026-11-19
 
 - Fix MITOS coding-gene display when RNA features coexist; support CDS parents,
