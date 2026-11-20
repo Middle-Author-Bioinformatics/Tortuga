@@ -8,6 +8,20 @@ links. Move or share the **whole output directory** to keep those links working.
 Selected gene/ITS-region sequences and reduced graph-node sequences are embedded
 for copying and FASTA download. Raw reads and whole-genome assemblies are not embedded.
 
+The `Result files` count belongs to the currently selected branch and includes
+only its displayed deliverables. Duplicate FASTA aliases, intermediates and logs
+are not counted there. Four mitogenome files can be the complete displayed set:
+the selected FASTA, gene-recovery CSV, MITOS GFF and feature TSV. Different counts
+do not indicate that fewer assembly methods ran.
+
+In the assembly-graph view, `Source graphs` provides downloads of available native
+graphs independently of selected-path mapping. `Selected path unavailable` means
+source graphs exist but the report could not establish the displayed sequence's
+path. `Source graph unavailable` means no applicable source graph was found by
+the report inventory. Either can occur without an assembly failure. The report
+does not infer a replacement graph from FASTA or substitute a different method's
+graph. Deleted graphs cannot be restored by rebuilding HTML.
+
 COI reference names are displayed independently of the identity cutoff used to
 confirm the expected target. Version 2.4.1 recovers names from existing lineages
 when a prepared BOLD record ends with a missing-value marker such as `None`.

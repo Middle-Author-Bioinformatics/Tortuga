@@ -62,22 +62,46 @@ def inventory(sample, root, branch):
     entries = {}
     for row in table(sample/'final/outputs_manifest.tsv'):
         path = local_file(row.get('retained_file'), sample, root)
-        if path and path.suffix.lower() in {'.gfa', '.fastg', '.paths'}:
+        if path and path.suffix.lower() in {'.gfa', '.gfa2', '.fastg', '.paths'}:
             if branch in path.parts or (branch == 'ITSME') == path.name.startswith('itsme_'):
                 entries[path.resolve()] = {'path': path, 'source': row.get('source') or str(path)}
     for path in sorted((sample/branch).glob('*')):
-        if path.is_file() and path.suffix.lower() in {'.gfa', '.fastg', '.paths'}:
+        if path.is_file() and path.suffix.lower() in {'.gfa', '.gfa2', '.fastg', '.paths'}:
             entries.setdefault(path.resolve(), {'path': path, 'source': str(path)})
     # Before compact cleanup, preserve final pooled and per-bin assembly provenance.
     for stage in ['02_itsme', 'itsme'] if branch == 'ITSME' else ['011_novoplasty', '012_getorganelle', '013_mitofinder', '014_mtgrasp', '041_getorganelle_assembly', '042_mitofinder_assembly', '03_wgs']:
         for path in sorted((sample/stage).rglob('*')):
-            if not path.is_file() or path.suffix.lower() not in {'.gfa', '.fastg', '.paths'}:
+            if not path.is_file() or path.suffix.lower() not in {'.gfa', '.gfa2', '.fastg', '.paths'}:
                 continue
             if any(re.fullmatch(r'K\d+', part) or part in {'tmp', 'temp'} for part in path.parts):
                 continue
             if local_file(str(path), sample, root):
                 entries.setdefault(path.resolve(), {'path': path, 'source': str(path)})
     return list(entries.values())
+
+
+def source_graph_files(sample, root, branch, method=''):
+    """Download inventory independent of whether a selected path can be mapped.
+
+    Include sources attributed to the winning method and unattributed retained
+    graphs. Never imply that an unmapped source reconstructs the final sequence.
+    """
+    from build_dashboard import relative_file
+    files = []
+    methods = ('getorganelle', 'novoplasty', 'mitofinder', 'mtgrasp', 'wgs')
+    wanted = re.sub(r'[^a-z0-9]', '', method.lower())
+    for entry in inventory(sample, root, branch):
+        if entry['path'].suffix.lower() not in {'.gfa', '.gfa2', '.fastg'}:
+            continue
+        source = re.sub(r'[^a-z0-9]', '', (entry['source']+' '+entry['path'].name).lower())
+        attributed = next((name for name in methods if name in source), '')
+        if branch == 'MitoLooper' and wanted and attributed and attributed not in wanted:
+            if not (wanted.endswith('assembly') and attributed == 'wgs'):
+                continue
+        item = relative_file(entry['path'], root)
+        if item:
+            files.append(item)
+    return files
 
 
 class SourceGraph:

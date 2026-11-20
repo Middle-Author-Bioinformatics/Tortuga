@@ -423,7 +423,7 @@ def build_data(root, title=None, bold_metadata=None, export_graphs=False):
     if not samples:
         raise ValueError('No saved Tortuga sample summaries found in this directory')
     resolve_coi_names(samples, metadata_sources)
-    from graph_evidence import report_graphs
+    from graph_evidence import report_graphs, source_graph_files
     for sample in samples:
         mito = sample['mito']
         confidence_evidence = dict(mito['bold_evidence'])
@@ -435,6 +435,8 @@ def build_data(root, title=None, bold_metadata=None, export_graphs=False):
         mito['confidence'] = coi_support(mito['hits'], confidence_evidence)
         graphs = report_graphs(root/sample['id'], root, sample, export_graphs)
         mito['graphs'], sample['its']['graphs'] = graphs['MitoLooper'], graphs['ITSME']
+        mito['source_graphs'] = source_graph_files(root/sample['id'], root, 'MitoLooper', mito['method'])
+        sample['its']['source_graphs'] = source_graph_files(root/sample['id'], root, 'ITSME')
         its_taxa = {locus['locus']: locus['taxon'] for locus in sample['its']['loci']}
         for graph in sample['its']['graphs']:
             for node in graph['nodes']:

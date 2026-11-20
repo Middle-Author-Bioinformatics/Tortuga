@@ -1,3 +1,12 @@
+# 2.4.2 - 2026-11-19
+
+- Keep retained source graphs downloadable when the selected sequence cannot be
+  mapped onto them. Distinguish an unavailable selected path from a missing
+  source graph, without claiming that an unmapped graph produced the sequence.
+- Rename the dashboard's filtered, branch-specific file list to `Result files`.
+  Its count excludes hidden duplicate/intermediate FASTAs and is not the total
+  number of files retained for the sample.
+
 # 2.4.1 - 2026-11-19
 
 - Recover observed COI reference names from existing BOLD lineages when the
