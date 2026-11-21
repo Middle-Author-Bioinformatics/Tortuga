@@ -242,5 +242,11 @@ def coi_support(hits, evidence):
              'Moderate' if identity >= 97 and length >= 150 and coverage is not None and coverage >= .8 else 'Low')
     if len(names) > 1:
         grade = 'Mixed'
-    return {'grade': grade, 'taxon': '' if incomplete else common, 'agreement': f'{len(known)}/{len(near)}',
+    lineage = ''
+    if common and not incomplete:
+        parts = [part.strip() for part in best.get('lineage', '').split(';') if part.strip()]
+        position = next((i for i, part in enumerate(parts) if part.casefold() == common.casefold()), None)
+        if position is not None:
+            lineage = ';'.join(parts[:position+1])
+    return {'grade': grade, 'taxon': '' if incomplete else common, 'lineage': lineage, 'agreement': f'{len(known)}/{len(near)}',
             'identity': best.get('identity'), 'aligned_bp': best.get('aligned_bp'), 'coverage': coverage}

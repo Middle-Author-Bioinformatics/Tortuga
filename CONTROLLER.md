@@ -144,10 +144,36 @@ output directory's lock. It never cleans a different run directory. A missing
 path and an unrecognized folder now produce distinct messages.
 For new runs no cleanup flag is needed: compaction is the default.
 
-## Configurable stopping criteria (2.0.6)
+## Circle-first recovery (default, 2.5.0)
 
-The default remains circularity plus all reference CDS/rRNA genes and the
-configured genome length range. To stop sooner, choose the topology and a rule:
+Read methods run sequentially until the first circular candidate is recovered.
+That circle stops all later mitochondrial assemblers, including WGS. In combined
+mode ITSME still runs independently. Taxonomy and reference-gene checks are
+recorded but do not prevent circular recovery from stopping the method loop.
+
+If the read methods yield no circle and `--no-assembly` is absent, metaSPAdes runs
+without a deadline by default, followed by GetOrganelle graph recovery and then
+MitoFinder contig recovery only as needed. Stop at the first circle in this phase
+as well. `--no-assemble` is an alias of `--no-assembly`.
+
+If no circle is found, retain the single candidate with the most expected
+CDS/rRNA genes, then greatest length. Without gene-screen evidence, this selects
+the longest candidate. `--linear-ranking length` reverses those priorities.
+Ambiguous-base count breaks a remaining tie. Taxonomic confirmation does not
+override this fallback ordering. Annotation remains enabled for the selected
+linear candidate by default.
+
+`--assembly-timeout 0` means unlimited; positive values impose an explicit
+deadline in minutes. Other method/validation limits retain their own settings.
+Use a new output directory for this workflow; rebuilding a historical dashboard
+does not rerun methods or change which sequence that run selected.
+
+## Optional legacy acceptance stopping policy
+
+Select `--recovery-policy acceptance` to restore the earlier gated stopping
+workflow. In that mode, the default requires circularity plus all reference
+CDS/rRNA genes and the configured genome length range. To stop sooner, choose
+the topology and a rule:
 
 | Option | Meaning |
 | --- | --- |
@@ -177,13 +203,13 @@ Examples of user-chosen thresholds, to append to an existing command:
 
 ```bash
 # Accept a circular or unclosed candidate with at least 12 CDS/rRNA genes.
---accept-topology any --accept-rule genes --min-detected-genes 12
+--recovery-policy acceptance --accept-topology any --accept-rule genes --min-detected-genes 12
 
 # Accept a circular or unclosed candidate of at least 14,000 bp.
---accept-topology any --accept-rule length --min-accepted-bp 14000
+--recovery-policy acceptance --accept-topology any --accept-rule length --min-accepted-bp 14000
 
 # Require both thresholds; avoid WGS once a candidate passes.
---accept-topology any --accept-rule both --min-detected-genes 12 --min-accepted-bp 14000 --skip-wgs-if-accepted
+--recovery-policy acceptance --accept-topology any --accept-rule both --min-detected-genes 12 --min-accepted-bp 14000 --skip-wgs-if-accepted
 ```
 
 The numbers above illustrate configuration; they are not taxon-specific biological

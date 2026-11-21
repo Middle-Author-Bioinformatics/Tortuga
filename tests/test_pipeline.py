@@ -61,7 +61,9 @@ def fixture(tmp_path):
     commands={k:[sys.executable,str(ROOT/"tests/mock_tools.py"),str(scenario),k] for k in m.DEFAULT_COMMANDS}
     config.write_text(json.dumps({"commands":commands}))
     out=tmp_path/"results"
-    argv=[str(reads),"--samples",str(sheet),"--bold-fasta",str(bold),"--bold-metadata",str(meta),
+    # Existing acceptance-policy regressions exercise the explicitly retained
+    # legacy mode. Circle-first integration cases override this below.
+    argv=[str(reads),"--recovery-policy","acceptance","--samples",str(sheet),"--bold-fasta",str(bold),"--bold-metadata",str(meta),
           "--mitos-refdir",str(refdir),"--mitos-refseqver","release","--config",str(config),"-o",str(out),"--keep-intermediates"]
 
     def run(methods,extra=(),fail=()):
