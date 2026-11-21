@@ -72,7 +72,7 @@ function sampleList() {
     const text = [sample.id, sample.expected_taxon, ...(sample.mito.reference_taxa || []), ...sample.its.loci.map(locus => locus.taxon)].join(' ').toLowerCase();
     if (!text.includes(query)) return;
     const mito = mitoIndicator(sample.mito), its = itsIndicator(sample.its);
-    if (!sample.mito.sequence && sample.status === 'failed') {mito.kind='failed'; mito.label='Mitochondrial recovery failed';}
+    if (!sample.mito.sequence && (sample.status === 'failed' || sample.stages.some(stage => ['novoplasty','getorganelle','mitofinder','mtgrasp','wgs','getorganelle_assembly','mitofinder_assembly'].includes(stage.stage) && ['failed','timeout'].includes(stage.status)))) {mito.kind='failed'; mito.label='Mitochondrial recovery failed';}
     list.append(el('button', {class: 'sample-row', 'aria-pressed': String(index === state.sample), onclick: () => selectSample(index)},
       el('span', {}, el('strong', {}, sample.id), el('small', {}, sample.expected_taxon || sample.its.loci[0]?.taxon || 'Identity not supplied')),
       el('span', {class: 'dots', 'aria-label': `${mito.label}; ${its.label}`, title:`${mito.label}; ${its.label}`},
