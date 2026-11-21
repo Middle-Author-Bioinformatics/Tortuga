@@ -20,7 +20,7 @@ import sys
 import time
 from bold_taxonomy import normalize_taxonomy
 
-VERSION = "2.4.2"
+VERSION = "2.4.3"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -391,9 +391,17 @@ def qualifying_genes(rows, min_identity, min_coverage):
     return best
 
 
+def coi_alignment_qualifies(row, identity, coverage, min_bp):
+    try:
+        shorter = min(int(row['qlen']), int(row['slen']))
+        return (shorter > 0 and float(row['pident']) >= identity and int(row['length']) >= min_bp
+                and int(row['length'])/shorter >= coverage)
+    except (KeyError, ValueError, TypeError, ZeroDivisionError):
+        return False
+
+
 def bold_decision(rows, metadata, target, identity, coverage, min_bp, near_fraction, max_hits):
-    good = [r for r in rows if float(r["pident"]) >= identity and int(r["length"]) >= min_bp
-            and int(r["length"])/min(int(r["qlen"]), int(r["slen"])) >= coverage]
+    good = [r for r in rows if coi_alignment_qualifies(r, identity, coverage, min_bp)]
     by_subject = {}
     for row in rows:
         by_subject[row["sseqid"]] = max(by_subject.get(row["sseqid"],0),float(row["bitscore"]))
@@ -410,9 +418,9 @@ def bold_decision(rows, metadata, target, identity, coverage, min_bp, near_fract
     boundary = min(by_subject.values())
     details.update(near_best_cutoff=cutoff,boundary_bitscore=boundary,
                    near_best_truncated=details["hit_limit_reached"] and boundary>=cutoff)
-    if any(float(r["bitscore"]) > best and r not in good for r in rows):
-        status, reason, code = "unresolved", "A higher-scoring BOLD alignment fails quality gates", "higher_hit_fails_quality"
-    elif details["near_best_truncated"]:
+    # Rank evidence only after the configured quality gates. A long divergent
+    # homolog must not veto a high-identity shorter barcode by raw bit score.
+    if details["near_best_truncated"]:
         status, reason, code = "unresolved", "BOLD near-best score window reaches the search limit", "near_best_truncated"
     elif any(r["sseqid"] not in metadata for r in near):
         status, reason, code = "unresolved", "Missing BOLD record metadata", "missing_metadata"

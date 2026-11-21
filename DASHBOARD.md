@@ -1,5 +1,20 @@
 # A report that travels with the results
 
+Version 2.4.3 ranks qualifying COI hits before choosing the displayed reference
+lineage. A long low-identity homolog can have a higher raw BLAST bit score than a
+short nearly identical barcode; it no longer displaces or vetoes that barcode
+when it fails the configured quality gates. If nothing qualifies, the dashboard
+still shows closest raw reference matches as observations. Taxon-conflict and
+search-limit safeguards remain active. Existing reports use thresholds saved in
+BOLD evidence; `annotate_existing.sh --recheck-bold` refreshes target decisions
+under the corrected logic without repeating assembly or unchanged MITOS jobs.
+
+For RNA features with explicit GFF child exons, the map and sequence popover use
+those segments rather than the enclosing parent interval. Split MITOS parts
+named `-a`, `-b` are joined in their stated transcript order. Native parent bounds
+remain in the embedded evidence and original GFF is preserved. Rebuilding the
+dashboard alone applies this coordinate-display correction.
+
 Tortuga writes **dashboard.html** in the cohort output directory. Open it directly
 in a modern browser. All display data, CSS, JavaScript, gene maps and bounded graph
 previews are embedded: no server, account, CDN, internet access or browser plugins

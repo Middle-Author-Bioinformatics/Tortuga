@@ -92,13 +92,14 @@ function mapSequence(length, features, regionMap = false) {
   for (const feature of features) {
     const name = regionMap ? feature.name : feature.gene;
     const y = regionMap ? 65 : feature.strand === '-' ? 99 : 47;
-    const group = svg('g', {class: 'gene', tabindex: 0, role: 'button', 'aria-label': `${name}, ${feature.start} to ${feature.end} bp`});
+    const coordinates = (feature.segments || [[feature.start, feature.end]]).map(([a, b]) => `${fmt(a)}–${fmt(b)}`).join('; ');
+    const group = svg('g', {class: 'gene', tabindex: 0, role: 'button', 'aria-label': `${name}, ${coordinates} bp`});
     for (const [start, end] of feature.segments || [[feature.start, feature.end]]) {
       const x = scale(start), width = Math.max(2, (end-start+1)/length*850);
       group.append(svg('rect', {x, y, width, height: 29, rx: 2, fill: colors[regionMap ? name : feature.type] || '#7e9a8a'}));
       if (width > name.length*6.7+8) {const label = svg('text', {x: x+width/2, y: y+19, 'text-anchor': 'middle', fill: '#10251b', 'font-size': 11}); label.textContent = name; group.append(label);}
     }
-    const select = () => {drawing.querySelectorAll('.selected').forEach(node => node.classList.remove('selected')); group.classList.add('selected'); readout.textContent = `${name} · ${fmt(feature.start)}–${fmt(feature.end)} bp${feature.strand ? ' · '+feature.strand : ''}`; showSequence(group, name, feature.sequence || '', readout.textContent);};
+    const select = () => {drawing.querySelectorAll('.selected').forEach(node => node.classList.remove('selected')); group.classList.add('selected'); readout.textContent = `${name} · ${coordinates} bp${feature.strand ? ' · '+feature.strand : ''}`; showSequence(group, name, feature.sequence || '', readout.textContent);};
     group.addEventListener('click', select); group.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); select();}});
     drawing.append(group);
   }

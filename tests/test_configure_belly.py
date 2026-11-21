@@ -117,6 +117,6 @@ def test_launcher_enters_controller_environment_without_manual_activation(tmp_pa
     env.pop("MITO_CONDA_EXE",None)
     p=subprocess.run(["bash",str(root/"mito_looper.sh"),"--version"],env=env,capture_output=True,text=True)
     assert p.returncode==0,p.stderr
-    assert p.stdout.strip()=="2.4.2"
+    assert p.stdout.strip()=="2.4.3"
     assert trace.read_text().strip()==str(envs/"itsme")
 

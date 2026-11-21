@@ -200,23 +200,39 @@ def coi_matches(evidence, raw):
     """Observed reference matches are independent of the target acceptance filter."""
     saved = evidence.get('hits', [])
     metadata = {hit.get('sseqid'): hit.get('metadata', {}) for hit in saved if hit.get('sseqid')}
-    rows = saved
-    count = len(saved)
+    thresholds = evidence.get('alignment_thresholds', {})
+    quality_keys = ('identity_percent', 'shorter_sequence_coverage', 'minimum_aligned_bp')
+    use_quality = all(key in thresholds for key in quality_keys)
+    from mito_pipeline import coi_alignment_qualifies
+
+    def ranked(rows, raw_rows=False):
+        raw_top, good_top = [], []
+        raw_count, good_count = 0, 0
+        def retain(pool, entry):
+            if len(pool) < BOLD_PREVIEW:
+                heapq.heappush(pool, entry)
+            elif entry[:2] > pool[0][:2]:
+                heapq.heapreplace(pool, entry)
+        for serial, row in enumerate(rows):
+            score = number(row.get('bitscore'))
+            if raw_rows and (not row.get('sseqid') or score is None):
+                continue
+            raw_count += 1
+            entry = (score or 0, -serial, row)
+            retain(raw_top, entry)
+            if use_quality and coi_alignment_qualifies(row, *(thresholds[key] for key in quality_keys)):
+                good_count += 1
+                retain(good_top, entry)
+        # Keep distant reference observations visible if no hit passes; do not
+        # let them displace qualifying barcodes when those are available.
+        selected = good_top or raw_top
+        return [entry[2] for entry in sorted(selected, reverse=True)], good_count if good_top else raw_count
+
     if raw:
         with raw.open(newline='') as handle:
-            # Keep a bounded preview even for saturated searches. No sequences or
-            # full BOLD metadata database are loaded into the dashboard builder.
-            reader = csv.DictReader(handle, fieldnames=BOLD_COLUMNS, delimiter='\t')
-            count = 0
-            def valid_rows():
-                nonlocal count
-                for row in reader:
-                    if row.get('sseqid') and number(row.get('bitscore')) is not None:
-                        count += 1
-                        yield row
-            rows = heapq.nlargest(BOLD_PREVIEW, valid_rows(), key=lambda hit: number(hit.get('bitscore')))
+            rows, count = ranked(csv.DictReader(handle, fieldnames=BOLD_COLUMNS, delimiter='\t'), raw_rows=True)
     else:
-        rows = sorted(saved, key=lambda hit: number(hit.get('bitscore')) or 0, reverse=True)[:BOLD_PREVIEW]
+        rows, count = ranked(saved)
     hits = []
     for hit in rows:
         meta = hit.get('metadata') or metadata.get(hit.get('sseqid'), {})
