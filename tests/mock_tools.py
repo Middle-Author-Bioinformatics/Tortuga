@@ -37,6 +37,8 @@ elif tool in {"novoplasty","getorganelle","getorganelle_assembly","mitofinder","
     state = scenario.get("methods",{}).get(key)
     if state:
         seq=Path(scenario["sequence"]).read_text().strip()
+        if state.get('length'):
+            seq = seq[:state['length']]
         if state.get("overlap"):
             seq += seq[:150]
         if tool == "novoplasty":

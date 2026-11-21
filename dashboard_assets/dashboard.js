@@ -55,18 +55,28 @@ function fileList(files, title = 'Result files') {
   return files.length ? details(title+' · '+files.length, table(['File', 'Size'], files.map(file => [link(file), fmt(file.bytes/1024)+' KiB']))) : null;
 }
 function selectSample(index) {state.sample = index; state.locus = 0; state.mode = 'map'; render();}
+function mitoIndicator(mito) {
+  return mito.sequence ? (mito.circular ? {kind:'circular',label:'Circular mitogenome'} : {kind:'linear',label:'Unclosed mitogenome'}) :
+    {kind:'missing',label:'No mitochondrial sequence'};
+}
+function itsIndicator(its) {
+  if (its.count > 0) return {kind:'full',label:`Full-length ITS · ${its.count} complete loci`};
+  if (its.partial_count > 0) return {kind:'fragmented',label:`Fragmented ITS · ${its.partial_count} partial loci`};
+  return ['failed','timeout'].includes(its.run_status) ? {kind:'failed',label:'ITSME '+its.run_status} :
+    {kind:'missing',label:its.run_status === 'not_requested' ? 'ITSME not requested' : 'No ITS sequence'};
+}
 function sampleList() {
   const query = $('search').value.toLowerCase();
   const list = $('sample-list'); list.replaceChildren();
   report.samples.forEach((sample, index) => {
     const text = [sample.id, sample.expected_taxon, ...(sample.mito.reference_taxa || []), ...sample.its.loci.map(locus => locus.taxon)].join(' ').toLowerCase();
     if (!text.includes(query)) return;
-    const mitoClass = sample.mito.accepted ? 'yes' : sample.mito.sequence ? 'partial' : sample.status === 'failed' ? 'no' : '';
-    const itsClass = sample.its.count > 0 ? 'yes' : '';
+    const mito = mitoIndicator(sample.mito), its = itsIndicator(sample.its);
+    if (!sample.mito.sequence && (sample.status === 'failed' || sample.stages.some(stage => ['novoplasty','getorganelle','mitofinder','mtgrasp','wgs','getorganelle_assembly','mitofinder_assembly'].includes(stage.stage) && ['failed','timeout'].includes(stage.status)))) {mito.kind='failed'; mito.label='Mitochondrial recovery failed';}
     list.append(el('button', {class: 'sample-row', 'aria-pressed': String(index === state.sample), onclick: () => selectSample(index)},
       el('span', {}, el('strong', {}, sample.id), el('small', {}, sample.expected_taxon || sample.its.loci[0]?.taxon || 'Identity not supplied')),
-      el('span', {class: 'dots', 'aria-label': `Mitogenome ${sample.mito.accepted ? 'accepted' : 'not accepted'}; ${sample.its.count || 0} complete ITS loci`},
-        el('span', {class: 'dot '+mitoClass, 'aria-hidden': 'true'}), el('span', {class: 'dot '+itsClass, 'aria-hidden': 'true'}))));
+      el('span', {class: 'dots', 'aria-label': `${mito.label}; ${its.label}`, title:`${mito.label}; ${its.label}`},
+        el('span', {class: 'dot '+mito.kind, title:mito.label, 'aria-hidden': 'true'}), el('span', {class: 'dot '+its.kind, title:its.label, 'aria-hidden': 'true'}))));
   });
   if (!list.children.length) list.append(el('p', {class: 'blank-list'}, 'No matching samples.'));
 }
@@ -170,7 +180,7 @@ function renderGraph(graphs, host, locus = null, method = '', sources = []) {
 function mitoView(sample) {
   const mito = sample.mito, root = document.createDocumentFragment();
   root.append(metrics([
-    [mito.accepted ? 'Accepted assembly' : 'Best candidate', fmt(mito.length), 'bp'],
+    [mito.sequence ? 'Recovered sequence' : 'Sequence length', fmt(mito.length), 'bp'],
     ['Topology', mito.circular === true ? 'Circular' : mito.circular === false ? 'Unclosed' : 'Unknown'],
     [mito.core_genes?.source === 'MITOS annotation' ? 'Annotated core CDS / rRNA' : 'Screened core CDS / rRNA', `${fmt(mito.core_genes?.cds)} / 13 · ${fmt(mito.core_genes?.rrna)} / 2`, '', mito.core_genes?.extra?.length ? 'Additional: '+mito.core_genes.extra.join(', ') : ''],
     ['Recovery method', mito.method ? methodName(mito.method) : '—']
@@ -188,8 +198,12 @@ function mitoView(sample) {
   const taxa = mito.reference_taxa || [];
   const bestHit = mito.hits[0];
   const confidence = mito.confidence || {};
-  root.append(el('div', {class: 'evidence'}, el('div', {}, el('h4', {}, confidence.taxon && !taxa.includes(confidence.taxon) ? 'Shared COI reference lineage' : 'COI reference match'), el('em', {}, confidence.taxon || (taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : mito.hits.length ? 'Taxonomy unavailable' : 'No COI match')), bestHit ? el('small', {}, `${fmt(bestHit.identity)}% identity · ${fmt(bestHit.aligned_bp)} bp${exists(bestHit.coverage)?' · '+fmt(bestHit.coverage*100)+'% coverage':''}`) : null), el('div', {}, el('h4', {}, 'Match confidence'), el('p', {title: 'Evidence grade from identity, aligned bases, coverage, metadata and near-best taxonomic agreement; not a probability.'}, confidence.grade || 'Unavailable'))));
-  root.append(el('div', {class: 'file-line'}, link(mito.sequence, mito.accepted ? 'Download accepted FASTA ↓' : 'Download candidate FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
+  const lineages = mito.hits.length ? (confidence.lineage ? [confidence.lineage] : (mito.reference_lineages || [])) : [];
+  root.append(el('div', {class: 'evidence'}, el('h4', {}, confidence.taxon && !taxa.includes(confidence.taxon) ? 'Shared COI reference lineage' : 'COI reference match'),
+    el('em', {}, confidence.taxon || (taxa.length ? taxa.slice(0, 3).join(' / ')+(taxa.length > 3 ? ' / …' : '') : mito.hits.length ? 'Taxonomy unavailable' : 'No COI match')),
+    ...lineages.map(lineage => el('p', {class:'coi-hierarchy'}, lineage.split(';').map(name => name.trim()).filter(Boolean).join(' › '))),
+    bestHit ? el('small', {}, `${fmt(bestHit.identity)}% identity · ${fmt(bestHit.aligned_bp)} bp${exists(bestHit.coverage)?' · '+fmt(bestHit.coverage*100)+'% coverage':''}`) : null));
+  root.append(el('div', {class: 'file-line'}, link(mito.sequence, 'Download mitogenome FASTA ↓', true), link(mito.annotation.file, 'MITOS annotations'), link(sample.summary_file, 'Evidence summary')));
   if (mito.annotation.features.length) root.append(details(`Annotation table · ${mito.annotation.features.length} feature records`, table(['Gene / feature', 'Type', 'Start', 'End', 'Strand', 'Product'], mito.annotation.features.map(feature => [feature.gene, feature.type, fmt(feature.start), fmt(feature.end), feature.strand, feature.product]))));
   if (mito.reference_genes?.length) root.append(details('Reference gene recovery', table(['Gene', 'Type', 'Detected', 'Coverage'], mito.reference_genes.map(gene => [gene.gene, gene.type, String(gene.screen_pass).toLowerCase() === 'true' ? 'Yes' : 'No', fmt(Number(gene.query_coverage)*100)+'%']))));
   root.append(details('Taxonomic evidence', el('div', {},
@@ -257,8 +271,8 @@ function renderView() {
   const sample = report.samples[state.sample];
   $('view').replaceChildren(state.branch === 'mito' ? mitoView(sample) : state.branch === 'its' ? itsView(sample) : runView(sample));
   const badge=$('sample-status');
-  badge.textContent=state.branch==='its'?'ITSME · '+human(sample.its.run_status):state.branch==='mito'?'Mito · '+(sample.mito.accepted?'Accepted':sample.mito.sequence?'Candidate':'No sequence'):'Run record';
-  badge.className='status '+(state.branch==='its'?(sample.its.run_status==='completed'?'':['failed','timeout'].includes(sample.its.run_status)?'fail':'warn'):sample.status.includes('failed')?'fail':sample.mito.accepted?'':'warn');
+  badge.textContent=state.branch==='its'?'ITSME · '+human(sample.its.run_status):state.branch==='mito'?'Mito · '+(sample.mito.sequence?(sample.mito.circular?'Circular':'Unclosed'):'No sequence'):'Run record';
+  badge.className='status '+(state.branch==='its'?(sample.its.run_status==='completed'?'':['failed','timeout'].includes(sample.its.run_status)?'fail':'warn'):sample.mito.sequence?(sample.mito.circular?'':'warn'):sample.status.includes('failed')?'fail':'warn');
   document.querySelectorAll('[data-branch]').forEach(button => {if (button.dataset.branch === state.branch) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');});
 }
 function render() {
@@ -281,14 +295,14 @@ function compare() {
     const mito = sample.mito.length, lengths = sample.its.loci.map(locus => locus.its_length_bp).filter(exists), its = lengths.length ? Math.max(...lengths) : null;
     host.append(el('div', {class: 'compare-row', tabindex: 0, role: 'button', 'aria-label': 'Open sample '+sample.id,
       onclick: () => {$('comparison').close(); selectSample(index);}, onkeydown: event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); $('comparison').close(); selectSample(index);}}},
-      el('span', {}, sample.id), el('div', {}, fmt(mito), el('small', {}, sample.mito.accepted ? ' · accepted' : ' · candidate'), mito ? el('div', {class: 'compare-bar', style: `width:${mito/maxMito*100}%`}) : null),
+      el('span', {}, sample.id), el('div', {}, fmt(mito), el('small', {}, sample.mito.circular ? ' · circular' : ' · unclosed'), mito ? el('div', {class: 'compare-bar', style: `width:${mito/maxMito*100}%`}) : null),
       el('div', {}, fmt(its), its ? el('div', {class: 'compare-bar its', style: `width:${its/maxIts*100}%`}) : null)));
   });
   $('comparison').showModal();
 }
 $('report-title').textContent = report.title;
 document.title = report.title+' · Tortuga';
-$('cohort-counts').textContent = `${report.samples.length} samples · ${report.samples.filter(sample => sample.mito.accepted).length} mito accepted · ${report.samples.filter(sample => sample.its.count > 0).length} with ITS`;
+$('cohort-counts').textContent = `${report.samples.length} samples · ${report.samples.filter(sample => sample.mito.sequence && sample.mito.circular).length} circular mito · ${report.samples.filter(sample => sample.its.count > 0).length} with ITS`;
 $('built').textContent = 'Built '+report.built.slice(0, 10)+' · UTC';
 $('cohort-files').append(...report.files.slice(0, 2).map(file => link(file, file.name === 'cohort_summary.csv' ? 'Cohort CSV ↓' : 'ITS loci CSV ↓')));
 $('search').addEventListener('input', sampleList);

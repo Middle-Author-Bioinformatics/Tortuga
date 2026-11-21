@@ -105,6 +105,11 @@ def archive_acceptance(sample,history):
 
 
 def recovered_status(summary):
+    if summary.get('recovery_policy') == 'circle-first' and summary.get('best_candidate'):
+        prefix = 'circular' if summary.get('circular') else 'linear'
+        suffix = ('annotated' if summary.get('annotation_ok') else
+                  'annotation_unavailable' if summary.get('annotation_status') == 'skipped_unknown_code' else 'annotation_failed')
+        return prefix+'_recovered_'+suffix
     if summary.get('accepted_by_policy'):
         strict=summary.get('strict_complete_candidate')
         if summary.get('annotation_status')=='skipped_unknown_code':

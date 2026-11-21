@@ -8,6 +8,7 @@ import dataclasses
 import gzip
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -20,7 +21,7 @@ import sys
 import time
 from bold_taxonomy import normalize_taxonomy
 
-VERSION = "2.4.3"
+VERSION = "2.5.0"
 READ_METHODS = ("novoplasty", "getorganelle", "mitofinder", "mtgrasp")
 DEFAULT_COMMANDS = {
     "novoplasty": ["perl", "NOVOPlasty4.3.5.pl"],
@@ -733,6 +734,22 @@ def score_candidate(c):
             -c["ambiguous_bp"], c["length_bp"])
 
 
+def linear_score(candidate, args):
+    """Rank recovery independently of taxonomy/strict acceptance gates."""
+    genes = len(set(candidate.get('genes_found', [])) | set(candidate.get('rrnas_found', [])))
+    length = candidate['length_bp']
+    primary = (length, genes) if args.linear_ranking == 'length' else (genes, length)
+    return (*primary, -candidate.get('ambiguous_bp', 0))
+
+
+def selected_candidate(candidates, args):
+    if not candidates:
+        return None
+    if args.recovery_policy == 'acceptance':
+        return max(candidates, key=score_candidate)
+    return next((candidate for candidate in candidates if candidate.get('circular')), None) or max(candidates, key=lambda c: linear_score(c, args))
+
+
 GENE_FIELDS = ["sample","method","gene","type","reference_length","aligned_reference_length",
                "query_coverage","identity_percent","screen_pass"]
 
@@ -991,23 +1008,28 @@ def process_sample(sample, args, commands, metadata, bold_db):
                                              runner, cdir, args, bold_db, metadata,mitofinder_circle)
                 candidate["source_path"] = str(file)
                 candidates.append(candidate)
+                label = (("CIRCULAR: stop mitochondrial recovery; " if candidate['circular'] else "LINEAR: retained for fallback; ")
+                         if args.recovery_policy == 'circle-first' else "ACCEPTED: " if candidate['accepted'] else "continue: ")
                 print(f"  Candidate {candidate['candidate_id']}: {candidate['length_bp']} bp; "
                       f"{candidate['detected_gene_count']} genes; circular={candidate['circular']}; "
                       f"target={candidate['target_status']}; "
-                      +("ACCEPTED: " if candidate["accepted"] else "continue: ")
+                      +label
                       +candidate["acceptance_reason"],flush=True)
+                if args.recovery_policy == 'circle-first' and candidate['circular']:
+                    winner = candidate
+                    return  # The first circle ends mitochondrial recovery, not ITSME.
                 if count >= args.max_candidates:
                     runner.skip(method+"_candidate_limit", f"Limit {args.max_candidates}; review extra paths manually")
                     break
             if count >= args.max_candidates:
                 break
-        eligible = [c for c in candidates if c["accepted"]]
+        eligible = [c for c in candidates if c["accepted"]] if args.recovery_policy == 'acceptance' else []
         if eligible:
             winner = max(eligible, key=score_candidate)
 
     for i, method in enumerate(READ_METHODS, 1):
         if winner:
-            runner.skip(method, "Candidate already meets configured acceptance policy")
+            runner.skip(method, "Circular mitogenome recovered" if args.recovery_policy == 'circle-first' else "Candidate already meets configured acceptance policy")
         else:
             recover(method, f"01{i}")
     if winner:
@@ -1026,8 +1048,8 @@ def process_sample(sample, args, commands, metadata, bold_db):
         runner.skip("itsme", "--branch mito")
 
     wgs_ok = None
-    if args.no_assembly or (winner and args.skip_wgs_if_accepted):
-        runner.skip("wgs", "--no-assembly" if args.no_assembly else "Candidate meets acceptance policy; --skip-wgs-if-accepted")
+    if args.no_assembly or (winner and (args.recovery_policy == 'circle-first' or args.skip_wgs_if_accepted)):
+        runner.skip("wgs", "--no-assembly" if args.no_assembly else "Circular mitogenome recovered" if args.recovery_policy == 'circle-first' else "Candidate meets acceptance policy; --skip-wgs-if-accepted")
     else:
         wgs = attempt_dir(root, runner, "wgs", root/"03_wgs")
         a, b = r1, r2
@@ -1047,7 +1069,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
             opts = ["-1", a, "-2", b, "-o", wgs/"output", "-t", args.threads,
                     "-m", args.memory*1024**3]
             graph, contigs = None, wgs/"output/final.contigs.fa"
-        wgs_ok = runner.run("wgs", assembler, opts, wgs, args.assembly_timeout*60,
+        wgs_ok = runner.run("wgs", assembler, opts, wgs, args.assembly_timeout*60 or None,
                             [contigs] + ([graph] if graph else []))
         if not winner and wgs_ok:
             if graph:
@@ -1057,13 +1079,13 @@ def process_sample(sample, args, commands, metadata, bold_db):
             if not winner:
                 recover("mitofinder_assembly", "042", contigs=contigs)
             else:
-                runner.skip("mitofinder_assembly", "Candidate meets configured acceptance policy")
+                runner.skip("mitofinder_assembly", "Circular mitogenome recovered" if args.recovery_policy == 'circle-first' else "Candidate meets configured acceptance policy")
         elif not winner:
             runner.skip("assembly_recovery", "WGS failed or timed out")
         else:
             runner.skip("assembly_recovery", "Read-based recovery already succeeded")
 
-    best = winner or (max(candidates, key=score_candidate) if candidates else None)
+    best = winner or selected_candidate(candidates, args)
     if best:
         shutil.copyfile(best["fasta"], final/"best_sequence.fasta")
     if best and annotation.get("candidate_id")!=best["candidate_id"]:
@@ -1071,7 +1093,7 @@ def process_sample(sample, args, commands, metadata, bold_db):
     elif not best:
         runner.skip("mitos2", "No mitochondrial candidate available for annotation")
         annotation["status"]="skipped_no_candidate"
-    strict_winner=bool(winner and winner["strict_complete_candidate"])
+    strict_winner=bool((best if args.recovery_policy == 'circle-first' else winner) and best["strict_complete_candidate"])
     status = ("accepted_annotation_disabled" if winner and annotation["status"]=="disabled" else
               "recovered_annotated" if strict_winner and annotation_ok else
               "accepted_by_policy_annotation_unavailable" if winner and sample.mt_code is None else
@@ -1080,12 +1102,18 @@ def process_sample(sample, args, commands, metadata, bold_db):
               "accepted_by_policy_annotation_failed" if winner else
               "partial_target_confirmed" if best and best["target_status"] == "confirmed_target" else
               "unresolved_candidate" if best else "no_candidate")
+    if args.recovery_policy == 'circle-first' and best:
+        suffix = ('annotation_disabled' if annotation['status'] in {'disabled','skipped_not_accepted'} else
+                  'annotated' if annotation_ok else 'annotation_unavailable' if sample.mt_code is None else 'annotation_failed')
+        status = ('circular' if best['circular'] else 'linear')+'_recovered_'+suffix
     summary = {"sample": sample.sample, "pipeline":args.pipeline or ("both" if args.branch=="full" else "mitolooper"),
                "status": "planned" if args.dry_run else status,
                "target_taxon": sample.target_taxon, "taxonomy": sample.taxonomy, "mt_code": sample.mt_code,
                "reference_gb":str(sample.reference_gb) if sample.reference_gb else "","reference_error":sample.reference_error,"reference_annotation_warnings":refs["annotation_warnings"],
                "winning_method": winner["method"] if winner else "", "best_candidate": best,
-               "accepted_by_policy":bool(winner),"strict_complete_candidate":strict_winner,
+               "accepted_by_policy":bool(best and best['accepted']),"strict_complete_candidate":strict_winner,
+               "recovery_policy":args.recovery_policy,"linear_ranking":args.linear_ranking,
+               "recovery_selection":('first_circular' if winner else 'best_linear' if best else 'no_candidate') if args.recovery_policy == 'circle-first' else 'acceptance_policy',
                "acceptance_policy":acceptance_policy(args),
                "complete_by_reference":bool(best and best["complete_by_reference"]),
                "candidate_count": len(candidates), "itsme_ok": itsme_ok, "wgs_ok": wgs_ok,
@@ -1151,7 +1179,11 @@ def parser(require_pipeline=False):
     p.add_argument("--bold-metadata", type=Path, help="Matching BOLD provenance/taxonomy TSV")
     p.add_argument("--mitos-refdir", type=Path)
     p.add_argument("--mitos-refseqver", help="MITOS2 reference release subdirectory")
-    p.add_argument("--no-assembly", action="store_true")
+    p.add_argument("--no-assembly", "--no-assemble", action="store_true", help="Disable whole-read assembly fallback; retain the best read-derived candidate")
+    p.add_argument('--recovery-policy', choices=['circle-first','acceptance'], default='circle-first',
+                   help='Default: stop on the first circular candidate; acceptance restores the legacy gated stopping policy')
+    p.add_argument('--linear-ranking', choices=['genes','length'], default='genes',
+                   help='Linear fallback: most expected genes then length (default), or longest then gene count')
     p.add_argument("--skip-wgs-if-accepted",action="store_true",
                    help="Skip separate WGS when read recovery already meets acceptance policy; ITSME still runs")
     p.add_argument("--assembler", choices=["metaspades","megahit"], default="metaspades")
@@ -1165,7 +1197,7 @@ def parser(require_pipeline=False):
     p.add_argument("--keep-intermediates",action="store_true",
                    help="Keep large stage work files for debugging/resume; default exports essentials and deletes intermediates")
     p.add_argument("--method-timeout", type=float, default=60, help="Minutes per mitochondrial recovery method")
-    p.add_argument("--assembly-timeout", type=float, default=120, help="Minutes for WGS process group")
+    p.add_argument("--assembly-timeout", type=float, default=0, help="Minutes for WGS process group; 0 means unlimited (default)")
     p.add_argument("--annotation-timeout", type=float, default=120)
     p.add_argument("--validation-timeout", type=float, default=20)
     p.add_argument("--itsme-timeout", type=float, default=180)
@@ -1435,8 +1467,10 @@ def main(argv=None,require_pipeline=False):
     validate_acceptance_options(args)
     if args.bold_max_hits<1 or args.bold_search_max_hits<args.bold_max_hits:
         raise ValueError("BOLD limits require 1 <= --bold-max-hits <= --bold-search-max-hits")
-    if any(getattr(args,k) <= 0 for k in ["method_timeout","assembly_timeout","annotation_timeout","validation_timeout","itsme_timeout"]):
+    if any(not math.isfinite(getattr(args,k)) or getattr(args,k) <= 0 for k in ["method_timeout","annotation_timeout","validation_timeout","itsme_timeout"]):
         raise ValueError("Timeouts must be positive")
+    if not math.isfinite(args.assembly_timeout) or args.assembly_timeout < 0:
+        raise ValueError('--assembly-timeout must be nonnegative; 0 means unlimited')
     if not 0 < args.gene_coverage <= 1 or not 0 < args.coi_coverage <= 1 or not 0 <= args.bold_near_fraction < 1:
         raise ValueError("Invalid coverage or near-best fraction")
     if args.coi_min_bp < 1 or not 0 <= args.coi_identity <= 100:
@@ -1513,6 +1547,10 @@ def main(argv=None,require_pipeline=False):
         write_table(args.outdir/"reference_failures.tsv",reference_failures,
                     ["sample","target_taxon","selection_status","reference_error"])
         atomic_json(args.outdir/"acceptance_policy.json",acceptance_policy(args))
+        atomic_json(args.outdir/'recovery_policy.json', {'mode':args.recovery_policy,
+                    'stop_on':'first_circular' if args.recovery_policy == 'circle-first' else 'acceptance_policy',
+                    'linear_ranking':args.linear_ranking, 'assembly_timeout_minutes':args.assembly_timeout,
+                    'assembly_disabled':args.no_assembly})
         core_columns = ["sample","target_taxon","mt_code","reference_gb","seed_fasta"]
         write_table(args.outdir/"resolved_samples.tsv",resolved_samples,
                     core_columns + [column for column in input_columns if column not in core_columns])
@@ -1579,7 +1617,7 @@ def main(argv=None,require_pipeline=False):
         write_table(args.outdir/"cohort_summary.csv",list(previous.values()),
                     ["sample","pipeline","status","target_taxon","mt_code","winning_method","best_method","best_length_bp",
                      "circular","target_status","genes_recovered","genes_expected","candidate_count",
-                     "accepted_by_policy","strict_complete_candidate","complete_by_reference","acceptance_policy",
+                     "accepted_by_policy","strict_complete_candidate","complete_by_reference","acceptance_policy","recovery_policy","recovery_selection","linear_ranking",
                      "itsme_ok","itsme_output","final_directory","wgs_ok","annotation_ok","annotation_status","annotation_scope","target_reason","failed_stages","error","cleanup_error",*ITS_FIELDS],",")
         gene_rows = []
         for name, row in previous.items():
@@ -1599,7 +1637,8 @@ def main(argv=None,require_pipeline=False):
             atomic_json(args.outdir/"cleanup_summary.json",{"bold_index_bytes_removed":removed,
                         "reference_search_bytes_removed":reference_removed,"sample_cleanup_reports":[r.get("cleanup_report",str(args.outdir/r["sample"]/"cleanup.json")) for r in results]})
             print(f"Removed {removed/1024**3:.2f} GiB of copied BOLD index",flush=True)
-        return 1 if any(r["status"] in {"failed","reference_unavailable","recovered_annotation_failed","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable"} or r.get("wgs_ok") is False
+        return 1 if any(r["status"] in {"failed","reference_unavailable","recovered_annotation_failed","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable",
+                        "circular_recovered_annotation_failed","linear_recovered_annotation_failed","circular_recovered_annotation_unavailable","linear_recovered_annotation_unavailable"} or r.get("wgs_ok") is False
                        or r.get("itsme_ok") is False or r.get("cleanup_error") or (not r.get("winning_method") and r.get("failed_stages"))
                        for r in results) else 0
 

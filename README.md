@@ -1,4 +1,4 @@
-# Tortuga 2.4.0
+# Tortuga 2.5.0
 
 Every sample has **ITSME/** and **MitoLooper/** results with explicit branch
 statuses, including disabled or failed branches. Native ITSME FASTAs, tables and
@@ -16,8 +16,15 @@ animal_mt database; ITSME and WGS still run normally.
 See [REFERENCE_SELECTION.md](REFERENCE_SELECTION.md) for rank matching,
 genetic-code safeguards, reports, reference-independent recovery and migration.
 Reference choice does not change the intended target for COI/BOLD validation.
-The default stopping policy still requires circularity and all reference genes;
-relaxed gene/length rules remain explicit options documented in CONTROLLER.md.
+The default recovery policy stops on the first circular mitochondrial candidate.
+Taxonomy and gene-completeness checks remain separate evidence, and do not force
+additional assemblers after circular recovery. With no circle, use optional
+metaSPAdes assembly/recovery, then retain the linear candidate with the most
+expected CDS/rRNA genes, breaking ties by length. `--linear-ranking length`
+instead prioritizes length. `--no-assembly` (alias `--no-assemble`) disables that
+assembly fallback. SPAdes has no default deadline; `--assembly-timeout 0` means
+unlimited. The earlier gated workflow remains available as
+`--recovery-policy acceptance`.
 
 **Unified controller:** `pipeline_controller.sh --pipeline itsme|mitolooper|both`
 selects standalone ITSME, mitochondrial recovery, or the integrated workflow.
@@ -47,10 +54,10 @@ There is no GNU parallel dispatch: both samples and methods run sequentially.
 | Stage | Behavior |
 | --- | --- |
 | Read preparation | Paired fastp QC by default; `--no-qc` uses the input reads directly. Mates are retained as pairs; no overlap merging. |
-| 1. Mitochondria from reads | NOVOPlasty, GetOrganelle, MitoFinder, then mtGrasp. Validate each output before trying the next method. Stop remaining read methods when a candidate meets the configured policy and target gate; the default requires circularity and all reference genes. Annotate that candidate with MITOS2 immediately. |
+| 1. Mitochondria from reads | NOVOPlasty, GetOrganelle, MitoFinder, then mtGrasp. Stop remaining mitochondrial recovery methods on the first circular candidate and annotate it with MITOS2. Keep taxonomy/completeness evidence separate. |
 | 2. ITS/rDNA | `--branch full` calls the separately installed ITSME v1.9 shell pipeline on original reads. Default `--branch mito` omits nuclear rDNA. |
-| 3. WGS assembly | metaSPAdes, with `--only-assembler`, a memory setting, wall-clock timeout, and optional percentage of reads. MEGAHIT is an alternative. This stage still runs after successful read recovery unless `--no-assembly` or `--skip-wgs-if-accepted` applies. |
-| 4. Mitochondria from assembly | If stage 1 failed to produce a passing candidate, GetOrganelle processes the metaSPAdes FASTG graph; MitoFinder then processes contigs if needed. New passing candidates go to MITOS2; otherwise annotate the best retained candidate after recovery finishes. |
+| 3. WGS assembly | If no read-derived circle exists and `--no-assembly` is absent, run metaSPAdes with `--only-assembler`, the configured memory and optional read subsampling. No time limit by default. MEGAHIT remains an alternative. |
+| 4. Mitochondria from assembly | GetOrganelle processes the metaSPAdes FASTG graph; MitoFinder processes contigs only if no circle has appeared. Stop at the first circle. If none appears, select and annotate the best retained linear candidate across both recovery phases. |
 | Reporting | Per-sample candidate/evidence tables, all method logs and statuses, best contiguous sequence, and a cohort CSV. |
 
 The proposal's optional ABySS/SOAPdenovo2 benchmarking is not implemented; the
@@ -444,7 +451,7 @@ fallback stages. `--no-assembly` can be combined with either branch.
 | Option | Default / effect |
 | --- | --- |
 | `--method-timeout` | 60 minutes per NOVOPlasty/GetOrganelle/MitoFinder/mtGrasp call. |
-| `--assembly-timeout` | 120 minutes per WGS assembler process group. |
+| `--assembly-timeout` | 0 (unlimited) for the WGS assembler; set a positive number of minutes to impose a deadline. |
 | `--annotation-timeout` | 120 minutes for MITOS2. |
 | `--validation-timeout` | 20 minutes per BLAST or junction-read verification call. |
 | `--itsme-timeout` | 180 minutes for the ITSME process group in full mode. |
@@ -529,7 +536,8 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `environment_selection.tsv`, `.json` | Selected stage environments and other matching installations; generated automatically when no explicit config is supplied. |
 | `cohort_gene_recovery.csv` | Per-gene reference coverage and identity for each sample's selected candidate. |
 | `SAMPLE/MitoLooper/best_sequence.fasta` | Best single contiguous candidate, potentially partial or unresolved; always read its summary. |
-| `acceptance_policy.json` | Active stopping rule, topology, length thresholds and gene-count definition. |
+| `recovery_policy.json` | Active recovery mode, linear ranking, WGS deadline and assembly-disable setting. |
+| `acceptance_policy.json` | Strict acceptance checks and thresholds; these gate stopping only in explicit legacy acceptance mode. |
 | `SAMPLE/MitoLooper/accepted_candidate.fasta` | Candidate that met the selected stopping policy; may be incomplete or unclosed under relaxed settings. |
 | `SAMPLE/MitoLooper/circular_target_candidate.fasta` | Written only for candidates passing circularity, reference gene recovery and COI target checks. |
 | `SAMPLE/final/summary.json` | Selection, evidence, statuses and caveats. |
@@ -547,7 +555,12 @@ fabricated. Unresolved, non-target and partial candidates retain their true stat
 | `SAMPLE/final/outputs_manifest.tsv` | Retained output inventory and original source paths. |
 | `SAMPLE/cleanup.json`, `cleanup_removed.tsv` | Compaction statistics and removed intermediate paths. |
 
-`recovered_annotated` means the defined recovery gates passed and a nonempty MITOS2
+Default circle-first runs use `circular_recovered_annotated` or
+`linear_recovered_annotated`; the corresponding `annotation_failed`,
+`annotation_unavailable` and `annotation_disabled` suffixes record annotation
+outcomes. These names describe the selected topology and do not assert target
+identity. `recovery_policy.json` and per-sample summaries record how selection
+was made. In legacy acceptance mode, `recovered_annotated` means the defined recovery gates passed and a nonempty MITOS2
 GFF was produced. `recovered_annotation_failed` means recovery passed but annotation
 failed. Relaxed-policy winners use `accepted_by_policy_annotated` or
 `accepted_by_policy_annotation_failed`; those names do not claim complete or

@@ -535,7 +535,9 @@ def finished_sample(sample):
     result=read_json(summary)
     if result.get("status") not in {"completed","failed","recovered_annotated","recovered_annotation_failed",
             "accepted_by_policy_annotated","accepted_by_policy_annotation_failed","accepted_by_policy_annotation_unavailable","accepted_annotation_disabled","partial_target_confirmed",
-            "unresolved_candidate","no_candidate","reference_unavailable"}:
+            "unresolved_candidate","no_candidate","reference_unavailable"} | {
+                topology+'_recovered_'+annotation for topology in ('circular','linear')
+                for annotation in ('annotated','annotation_failed','annotation_unavailable','annotation_disabled')}:
         return False
     # A newer checkpoint can indicate an interrupted retry with a stale old summary.
     return summary.stat().st_mtime_ns>=config.stat().st_mtime_ns

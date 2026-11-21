@@ -1,5 +1,14 @@
 # A report that travels with the results
 
+Version 2.5.0 removes the match-confidence panel and displays the available
+observed COI hierarchy. A shore-crab mark replaces the generic icon and is
+embedded in the offline HTML. The collection count reports circular mitogenomes,
+independently of the older taxonomy/completeness acceptance gates. Sample-list
+MITO/ITS dots use solid mint for circular/full-length, half-filled amber for
+unclosed/fragmented, hollow for no sequence, and red for failed branches without
+a retained result. Hover labels name the state. Fragmentation is shown only when
+the retained ITSME partial-locus report provides that evidence.
+
 Version 2.4.3 ranks qualifying COI hits before choosing the displayed reference
 lineage. A long low-identity homolog can have a higher raw BLAST bit score than a
 short nearly identical barcode; it no longer displaces or vetoes that barcode
@@ -120,11 +129,12 @@ Technical reasons and annotation scope remain in the downloadable native reports
 **Taxonomic evidence** contains a concise target agreement result and reference
 records. Failed/timed-out stages retain their log download links.
 
-**COI reference match** uses the highest-scoring saved alignment names, including
-ties within the bounded 12-record preview, independently of whether the target
-confirmation filter accepted them. Percent identity and aligned length accompany
-the name. Known names in older evidence without scores remain visible as reference
-matches, without claiming a ranking. Confirmed checks show **COI-supported identity**.
+**COI reference match** ranks qualifying saved alignments using their recorded
+thresholds, with closest raw observations available if no alignment qualifies.
+Percent identity, aligned length, coverage and the observed hierarchy accompany
+the name. A shared lineage ends at the supported common taxon. Known names in
+older evidence without scores remain visible without claiming a score ranking.
+Match-confidence grades remain in embedded evidence but are not displayed.
 Expected sample names are never substituted for absent observed reference names.
 
 If confirmation saved no qualifying hits, the builder reads `bold_hits.tsv` and

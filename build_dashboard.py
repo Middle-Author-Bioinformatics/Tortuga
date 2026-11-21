@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 import csv
@@ -288,6 +289,8 @@ def resolve_coi_names(samples, metadata_sources):
         mito['reference_ranked'] = top is not None
         mito['reference_taxa'] = sorted({hit['taxon'] for hit in hits if hit['taxon']
                                         and (top is None or hit['bitscore'] == top)})
+        mito['reference_lineages'] = sorted({hit['lineage'] for hit in hits if hit.get('lineage')
+                                            and (top is None or hit['bitscore'] == top)})
 
 
 def collect_sample(sample, root):
@@ -481,7 +484,9 @@ def write_dashboard(root, title=None, bold_metadata=None):
     assets = Path(__file__).parent/'dashboard_assets'
     template = (assets/'dashboard.html').read_text()
     payload = json.dumps(data, ensure_ascii=True, allow_nan=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
-    html = template.replace('/*__STYLE__*/', (assets/'dashboard.css').read_text())
+    logo = base64.b64encode((assets/'shore-crab.png').read_bytes()).decode('ascii')
+    html = template.replace('__BRAND_IMAGE__', 'data:image/png;base64,'+logo)
+    html = html.replace('/*__STYLE__*/', (assets/'dashboard.css').read_text())
     html = html.replace('/*__SCRIPT__*/', (assets/'dashboard.js').read_text()).replace('__REPORT_DATA__', payload)
     temporary.write_text(html)
     temporary.replace(target)

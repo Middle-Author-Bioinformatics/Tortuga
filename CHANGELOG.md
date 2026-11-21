@@ -1,3 +1,18 @@
+# 2.5.0 - 2026-11-21
+
+- Default to circle-first mitochondrial recovery: stop subsequent read methods
+  and WGS on the first circle, or stop assembly-derived recovery once a circle
+  appears. ITSME remains independent in combined mode. Keep taxonomy and strict
+  completeness as evidence rather than circular stopping gates.
+- If no circle is found, select a linear candidate by expected CDS/rRNA recovery
+  then length; `--linear-ranking length` reverses the priorities. Preserve the
+  earlier gated workflow under `--recovery-policy acceptance`.
+- Remove the default WGS deadline (`--assembly-timeout 0` means unlimited) and
+  accept `--no-assemble` as an alias for `--no-assembly`.
+- Report circular counts/topology instead of strict acceptance in the dashboard,
+  add informative MITO/ITS dot states and observed COI hierarchies, remove the
+  match-confidence panel, and embed a simple shore-crab logo.
+
 # 2.4.3 - 2026-11-20
 
 - Rank COI alignments after applying identity, length and coverage gates. Long,
