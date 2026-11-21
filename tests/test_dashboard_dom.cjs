@@ -120,6 +120,14 @@ assert(sourceLink && sourceLink.hasAttribute('download'));
 dom.window.eval("report.samples[0].mito.source_graphs=[]; render();");
 assert(text().includes('Source graph unavailable'));
 assert(!text().includes('Selected path unavailable'));
+// Split RNA segments occupy their annotated bases, not the parent envelope.
+dom.window.eval("state.mode='map'; report.samples[0].mito.length=18949; report.samples[0].mito.annotation.features.push({gene:'rrnL_0',type:'rRNA',start:17751,end:879,segments:[[17751,18475],[1,879]],strand:'+',sequence:'A'.repeat(1604)}); render();");
+const splitRna = document.querySelector('g[aria-label^="rrnL_0,"]');
+assert(splitRna && splitRna.querySelectorAll('rect').length === 2);
+assert([...splitRna.querySelectorAll('rect')].reduce((sum, rect) => sum+Number(rect.getAttribute('width')), 0) < 80);
+splitRna.dispatchEvent(new dom.window.MouseEvent('click', {bubbles:true}));
+assert(document.querySelector('.feature-readout').textContent.includes('17,751–18,475; 1–879'));
+assert.equal(document.querySelector('.sequence-popover textarea').value.length, 1604);
 assert.deepEqual(errors, []);
 console.log('Passed offline DOM checks: filtering, sample/branch/locus switching, gene selection, GFA/FASTG selection, zoom buttons, comparison, run failures and missing results.');
 dom.window.close();

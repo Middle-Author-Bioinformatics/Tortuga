@@ -82,6 +82,14 @@ def read_annotation(path, length, circular=False, sequence='', limit=3000):
             if len(rows) >= limit:
                 break
     result['multiple_sequences'] = len({row[0][0] for row in rows}) > 1
+    rna_ids = {(fields[0], attrs['ID']) for fields, attrs, name, start, end in rows
+               if fields[2].lower() in {'rrna', 'trna', 'ncrna'} and attrs.get('ID')}
+    rna_exons = defaultdict(list)
+    for fields, attrs, name, start, end in rows:
+        if fields[2].lower() == 'exon':
+            for parent in attrs.get('Parent', '').split(','):
+                if (fields[0], parent) in rna_ids:
+                    rna_exons[fields[0], parent].append((start, end, attrs, fields[6]))
     def resolved_name(fields, attrs, name):
         direct = attrs.get('gene') or attrs.get('Name') or attrs.get('gene_id')
         return direct or names.get(attrs.get('Parent', '').split(',')[0]) or name or fields[2]
@@ -89,6 +97,9 @@ def read_annotation(path, length, circular=False, sequence='', limit=3000):
                 if fields[2].lower() in {'cds', 'rrna', 'trna'}}
     seen = set()
     for fields, attrs, name, start, end in rows:
+        if fields[2].lower() == 'exon' and any((fields[0], parent) in rna_ids
+                for parent in attrs.get('Parent', '').split(',')):
+            continue  # Render the transcript once using its actual exon segments.
         name = resolved_name(fields, attrs, name)
         canonical = gene_name(name)
         native_type = fields[2]
@@ -111,6 +122,21 @@ def read_annotation(path, length, circular=False, sequence='', limit=3000):
             segments = [[start, length], [1, end-length]]
         elif circular and length and 1 <= end < start <= length:
             segments = [[start, length], [1, end]]
+        children = rna_exons.get((fields[0], attrs.get('ID', '')), [])
+        if children:
+            # Native MITOS RNA parents can be bounding spans across the origin.
+            # Explicit exons, including those preceding the parent, define the
+            # annotated bases; never fill the intervening envelope as RNA.
+            valid = all(1 <= a <= b and (not length or b <= length) and strand == fields[6]
+                        for a, b, child, strand in children)
+            ordered = sorted(children, key=lambda child: child[0])
+            labels = [re.fullmatch(re.escape(name)+r'-([a-z])', child[2].get('Name', '')) for child in children]
+            if all(labels) and len({label[1] for label in labels}) == len(children):
+                # MITOS labels split parts -a, -b in transcript order. Keep
+                # genomic order for the reverse-complement extraction below.
+                ordered = [child for label, child in sorted(zip([label[1] for label in labels], children),
+                           reverse=fields[6] == '-')]
+            segments = [[a, b] for a, b, child, strand in ordered] if valid else []
         if not segments:
             result['warnings'].append('Some feature coordinates exceed the displayed sequence length; those features were omitted.')
             continue
@@ -122,7 +148,9 @@ def read_annotation(path, length, circular=False, sequence='', limit=3000):
         if fields[6] == '-':
             nt = reverse_complement(nt)
         result['features'].append({'sequence_id': fields[0], 'type': kind, 'native_type': native_type,
-            'start': start, 'end': end, 'segments': segments, 'strand': fields[6], 'gene': name,
+            'start': segments[0][0] if children else start, 'end': segments[-1][1] if children else end,
+            'native_start': start, 'native_end': end, 'segments': segments,
+            'coordinate_source': 'child_exons' if children else 'feature', 'strand': fields[6], 'gene': name,
             'canonical_gene': canonical, 'sequence': nt,
             'feature_id': attrs.get('ID') or attrs.get('Parent', ''),
             'product': attrs.get('product', ''), 'source': fields[1]})

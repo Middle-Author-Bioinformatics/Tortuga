@@ -1,3 +1,15 @@
+# 2.4.3 - 2026-11-20
+
+- Rank COI alignments after applying identity, length and coverage gates. Long,
+  divergent homologs no longer veto qualifying shorter barcodes. The dashboard
+  previews qualifying hits first using saved thresholds, retaining distant raw
+  matches only when no qualifying hit exists. Search-limit and taxon-conflict
+  safeguards remain active.
+- Draw RNA transcripts from explicit GFF child exons instead of the enclosing
+  parent span. Preserve native bounds, join explicitly ordered MITOS split parts
+  for sequence copying, and display each segment's coordinates. Native GFF files
+  are unchanged; rebuilding the dashboard requires no MITOS rerun.
+
 # 2.4.2 - 2026-11-19
 
 - Keep retained source graphs downloadable when the selected sequence cannot be
